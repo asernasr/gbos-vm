@@ -101,24 +101,42 @@ echo "OS container     : $DIR/googlebook.raw"
 echo ""
 
 if [ "${1:-}" = "--install" ]; then
-    if [ ! -f "$DIR/os/gbos-asahi-full.zip" ]; then
-        echo "[1/2] Packaging full Asahi installer archive (ESP + googlebook.raw)..."
-        echo "      (This creates $DIR/os/gbos-asahi-full.zip read by asahi-installer)"
-        cp -f "$DIR/os/gbos-asahi-esp.zip" "$DIR/os/gbos-asahi-full.zip.tmp"
-        (cd "$DIR" && zip -q -0 "$DIR/os/gbos-asahi-full.zip.tmp" googlebook.raw)
-        mv -f "$DIR/os/gbos-asahi-full.zip.tmp" "$DIR/os/gbos-asahi-full.zip"
-    fi
+    rm -f "$DIR/os/gbos-asahi-full.zip.tmp" "$DIR/os/gbos-asahi-full.zip"
     TMP="/tmp/asahi-install"
     rm -rf "$TMP"
     mkdir -p "$TMP"
     cd "$TMP"
-    echo "[2/2] Fetching official Asahi Linux installer framework..."
+    echo "[1/2] Fetching official Asahi Linux installer framework..."
     PKG_VER="$(curl --no-progress-meter -L https://cdn.asahilinux.org/installer/latest)"
     curl --no-progress-meter -L -o "installer-$PKG_VER.tar.gz" "https://cdn.asahilinux.org/installer/installer-$PKG_VER.tar.gz"
     tar xf "installer-$PKG_VER.tar.gz"
-    sed 's/"gbos-asahi-esp.zip"/"gbos-asahi-full.zip"/' "$DIR/installer_data.json" > "$TMP/installer_data.json"
+    cp -f "$DIR/installer_data.json" "$TMP/installer_data.json"
+    # Enable zero-copy local streaming from $REPO_BASE/googlebook.raw so we never
+    # waste 34 GB of disk space duplicating googlebook.raw into a temporary zip archive.
+    python3 - "$TMP/src/osinstall.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = """                zinfo = self.pkg.getinfo(image)
+                if zinfo.file_size % (4 * 1024) != 0:
+                    raise Exception("The size of the rootfs image file must be a multiple of 4KiB.")
+                with self.pkg.open(image) as sfd, \\
+                    open(f"/dev/r{info.name}", "r+b") as dfd:
+                    self.fdcopy(sfd, dfd, zinfo.file_size)"""
+new = """                local_img = os.path.join(os.environ.get("REPO_BASE", "."), image)
+                if os.path.exists(local_img):
+                    fsize = os.stat(local_img).st_size
+                    with open(local_img, "rb") as sfd, open(f"/dev/r{info.name}", "r+b") as dfd:
+                        self.fdcopy(sfd, dfd, fsize)
+                else:
+                    zinfo = self.pkg.getinfo(image)
+                    with self.pkg.open(image) as sfd, open(f"/dev/r{info.name}", "r+b") as dfd:
+                        self.fdcopy(sfd, dfd, zinfo.file_size)"""
+assert old in s, "Expected osinstall.py block not found"
+p.write_text(s.replace(old, new, 1))
+PY
     export REPO_BASE="$DIR"
-    echo "Launching interactive Asahi Linux installer with Googlebook OS catalog..."
+    echo "[2/2] Launching interactive Asahi Linux installer with Googlebook OS catalog..."
     exec caffeinate -dis sudo -E ./install.sh
 fi
 
