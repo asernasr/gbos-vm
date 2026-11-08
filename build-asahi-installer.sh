@@ -111,12 +111,16 @@ if [ "${1:-}" = "--install" ]; then
     curl --no-progress-meter -L -o "installer-$PKG_VER.tar.gz" "https://cdn.asahilinux.org/installer/installer-$PKG_VER.tar.gz"
     tar xf "installer-$PKG_VER.tar.gz"
     cp -f "$DIR/installer_data.json" "$TMP/installer_data.json"
-    # Enable zero-copy local streaming from $REPO_BASE/googlebook.raw so we never
-    # waste 34 GB of disk space duplicating googlebook.raw into a temporary zip archive.
-    python3 - "$TMP/src/osinstall.py" <<'PY'
+    # Enable zero-copy local streaming from $REPO_BASE/googlebook.raw (so we never
+    # waste 34 GB of disk space duplicating googlebook.raw into a temporary zip archive)
+    # and keep min_recommended_size = self.min_size (~39.8 GB with stub instead of 2x).
+    OSINSTALL_PY="$TMP/osinstall.py"
+    [ -f "$TMP/src/osinstall.py" ] && OSINSTALL_PY="$TMP/src/osinstall.py"
+    python3 - "$OSINSTALL_PY" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
+s = s.replace("return self.min_size * 2", "return self.min_size")
 old = """                zinfo = self.pkg.getinfo(image)
                 if zinfo.file_size % (4 * 1024) != 0:
                     raise Exception("The size of the rootfs image file must be a multiple of 4KiB.")
