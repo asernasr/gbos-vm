@@ -39,5 +39,6 @@ for n in ('spice-client-glib-2.0.8', 'glib-2.0.0', 'gobject-2.0.0', 'gio-2.0.0',
 cmd += ['-Wl,-rpath,' + str(frameworks), '-Wl,-rpath,@executable_path/../../../../UTM-beta/UTM.app/Contents/Frameworks',
         '-o', str(app / 'MacOS/GooglebookViewer')]
 subprocess.run(cmd, check=True)
+subprocess.run(['xattr', '-cr', str(app.parent)], check=True)
 subprocess.run(['codesign', '--force', '--sign', '-', str(app.parent)], check=True, capture_output=True)
 print(app.parent)
