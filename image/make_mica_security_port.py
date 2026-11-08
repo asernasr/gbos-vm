@@ -183,10 +183,6 @@ if '--vulkan-desktop' in sys.argv:
   b=b.replace(before,(k+'='+new+'\n').encode())
  add('build.prop',b,label,mode)
  (O/'vulkan-desktop-experiment.json').write_text(json.dumps({'status':'experimental; Vulkan transfer probe passed, compositor compatibility unverified','properties':{k:v[1] for k,v in props.items()}})+'\n')
-if '--asahi-baremetal' in sys.argv:
- assert '--graphics' in sys.argv
- from mica_asahi_port import apply as asahi_baremetal
- old,new=asahi_baremetal(add,original,files);extra_dirs+=old;new_dirs+=new
 
 if '--full-redraw' in sys.argv:
  # A/B experiment, not the default: distinguish guest buffer-age/partial
@@ -273,6 +269,10 @@ for pass in 1 2 3 4 5 6 7 8; do
     sleep 30
 done
 ''','vendor_shell_exec',0o755)
+if '--asahi-baremetal' in sys.argv:
+ assert '--graphics' in sys.argv
+ from mica_asahi_port import apply as asahi_baremetal
+ old,new=asahi_baremetal(add,original,files);extra_dirs+=old;new_dirs+=new
 with tarfile.open(O/'overlay.tar','w',format=tarfile.PAX_FORMAT) as t:
  dirs=['.','bin','bin/hw','etc','etc/init','etc/init/hw','etc/selinux','etc/vintf','etc/vintf/manifest','lib64','lib64/hw','lib64/egl','lib64/vm_keymint']
  if '--audio' in sys.argv:dirs.append('apex')

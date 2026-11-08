@@ -3,10 +3,10 @@
 # into a standard Asahi Linux distro installer layout ($WORK/asahi-installer/).
 #
 # Output:
-#   - $WORK/asahi-installer/installer_data.json     (asahi-installer OS catalog manifest)
-#   - $WORK/asahi-installer/esp/                    (EFI System Partition tree for U-Boot/GRUB/m1n1)
-#   - $WORK/asahi-installer/gbos-asahi-esp.zip      (ESP archive for asahi-installer)
-#   - $WORK/asahi-installer/install-asahi-baremetal.sh (Interactive local installer launcher)
+#   - $WORK/asahi-installer/installer_data.json        (asahi-installer OS catalog manifest)
+#   - $WORK/asahi-installer/esp/                       (EFI System Partition tree for U-Boot/GRUB/m1n1)
+#   - $WORK/asahi-installer/os/gbos-asahi-esp.zip      (ESP archive for asahi-installer)
+#   - $WORK/asahi-installer/install-asahi-baremetal.sh (Interactive Asahi installer launcher)
 set -e
 . "$(dirname "$0")/lib.sh"
 
@@ -16,7 +16,7 @@ ASAHI_IMG_DIR="${GBOS_ASAHI_IMAGE_DIR:-$WORK/asahi-image}"
 OUT="$WORK/asahi-installer"
 ESP="$OUT/esp"
 rm -rf "$OUT"
-mkdir -p "$ESP/m1n1" "$ESP/efi/boot" "$ESP/gbos/dtb/apple" "$ESP/vendorfw"
+mkdir -p "$ESP/m1n1" "$ESP/efi/boot" "$ESP/gbos/dtb/apple" "$ESP/vendorfw" "$OUT/os"
 
 say "Populating EFI System Partition (ESP) boot tree"
 cp -f "$ASAHI_IMG_DIR/initrd.img" "$ESP/gbos/initrd.img"
@@ -45,17 +45,16 @@ fi
 BOOTCMD
 
 say "Creating ESP archive and computing installer_data.json metadata"
-(cd "$ESP" && zip -q -r "$OUT/gbos-asahi-esp.zip" .)
+(cd "$OUT" && zip -q -r "$OUT/os/gbos-asahi-esp.zip" esp)
 
 RAW_BYTES="$(stat -f%z "$ASAHI_IMG_DIR/googlebook.raw")"
-ESP_BYTES="$(stat -f%z "$OUT/gbos-asahi-esp.zip")"
 
 cat > "$OUT/installer_data.json" <<JSON
 {
   "os_list": [
     {
       "name": "Googlebook OS 17 (Apple Silicon Bare-Metal Workstation)",
-      "default_os": "Googlebook OS",
+      "default_os_name": "Googlebook OS",
       "boot_object": "m1n1.bin",
       "next_object": "u-boot-nodtb.bin",
       "package": "gbos-asahi-esp.zip",
@@ -69,7 +68,7 @@ cat > "$OUT/installer_data.json" <<JSON
           "volume_id": "0x2a47424f",
           "copy_firmware": true,
           "copy_installer_data": true,
-          "source": "/"
+          "source": "esp"
         },
         {
           "name": "Googlebook OS",
@@ -89,32 +88,51 @@ ln -sf "$ASAHI_IMG_DIR/googlebook.raw" "$OUT/googlebook.raw"
 cat > "$OUT/install-asahi-baremetal.sh" <<'INSTALLER'
 #!/bin/bash
 # Interactive Asahi Linux Bare-Metal Installer Launcher for Googlebook OS
-# Serves the local Googlebook OS installer_data.json and partition payloads to asahi-installer
-# so you can choose your internal NVMe partition size just like any standard Asahi Linux distro.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
+
 echo "======================================================================"
 echo " Googlebook OS (Android 17) - Apple Silicon Bare-Metal Distro Bundle"
 echo "======================================================================"
 echo "Bundle directory : $DIR"
 echo "Manifest         : $DIR/installer_data.json"
-echo "ESP archive      : $DIR/gbos-asahi-esp.zip"
+echo "ESP package      : $DIR/os/gbos-asahi-esp.zip"
 echo "OS container     : $DIR/googlebook.raw"
 echo ""
-echo "To install onto your M1 Mac's internal NVMe disk with interactive"
-echo "partition resizing via the standard Asahi Linux installer:"
-echo "  1. Start a local HTTP server in this directory (or run with --serve):"
-echo "       ./install-asahi-baremetal.sh --serve"
-echo "  2. Launch the official Asahi installer pointed at the local catalog:"
-echo "       export ASAHI_INSTALLER_BASE_URL=http://127.0.0.1:8000"
-echo "       curl -sL https://alx.sh | sh"
-echo ""
-if [ "${1:-}" = "--serve" ]; then
-    echo "Serving $DIR on http://127.0.0.1:8000 (Ctrl-C to stop)..."
-    exec python3 -m http.server 8000 --directory "$DIR"
+
+if [ "${1:-}" = "--install" ]; then
+    if [ ! -f "$DIR/os/gbos-asahi-full.zip" ]; then
+        echo "[1/2] Packaging full Asahi installer archive (ESP + googlebook.raw)..."
+        echo "      (This creates $DIR/os/gbos-asahi-full.zip read by asahi-installer)"
+        cp -f "$DIR/os/gbos-asahi-esp.zip" "$DIR/os/gbos-asahi-full.zip.tmp"
+        (cd "$DIR" && zip -q -0 "$DIR/os/gbos-asahi-full.zip.tmp" googlebook.raw)
+        mv -f "$DIR/os/gbos-asahi-full.zip.tmp" "$DIR/os/gbos-asahi-full.zip"
+    fi
+    TMP="/tmp/asahi-install"
+    rm -rf "$TMP"
+    mkdir -p "$TMP"
+    cd "$TMP"
+    echo "[2/2] Fetching official Asahi Linux installer framework..."
+    PKG_VER="$(curl --no-progress-meter -L https://cdn.asahilinux.org/installer/latest)"
+    curl --no-progress-meter -L -o "installer-$PKG_VER.tar.gz" "https://cdn.asahilinux.org/installer/installer-$PKG_VER.tar.gz"
+    tar xf "installer-$PKG_VER.tar.gz"
+    sed 's/"gbos-asahi-esp.zip"/"gbos-asahi-full.zip"/' "$DIR/installer_data.json" > "$TMP/installer_data.json"
+    export REPO_BASE="$DIR"
+    echo "Launching interactive Asahi Linux installer with Googlebook OS catalog..."
+    exec caffeinate -dis sudo -E ./install.sh
 fi
+
+echo "Usage:"
+echo "  ./work/asahi-installer/install-asahi-baremetal.sh --install"
+echo ""
+echo "What --install does:"
+echo "  1. Packages the ESP + googlebook.raw container into a zero-compression zip"
+echo "     archive at $DIR/os/gbos-asahi-full.zip."
+echo "  2. Downloads the official Asahi Linux installer into /tmp/asahi-install,"
+echo "     injects the Googlebook OS installer_data.json manifest, sets REPO_BASE"
+echo "     to $DIR, and launches the interactive Asahi partitioner & installer."
 INSTALLER
 chmod +x "$OUT/install-asahi-baremetal.sh"
 
 say "Asahi bare-metal installer bundle ready: $OUT"
-ls -lh "$OUT"
+ls -lh "$OUT" "$OUT/os"

@@ -363,11 +363,19 @@ def apply(add, original, files):
         add(f"usr/keylayout/{kl_name}", APPLE_KEYBOARD_KL, "vendor_configs_file")
 
     # 5. Update Bluetooth HAL service to accept either /dev/asahi_bt_hci (bare-metal BCM4377) or /dev/hvc0
+    # and strip QEMU-only `console ttyAMA0` from init .rc services (such as vm-offline-desktop.rc)
+    # so Android init never aborts service launch on bare-metal Apple Silicon where PL011 ttyAMA0 is absent.
     bt_svc = "android.hardware.bluetooth@aidl-service-qti"
     if f"etc/init/{bt_svc}.rc" in files:
         bt_rc, bt_lbl, bt_mode = files[f"etc/init/{bt_svc}.rc"]
         bt_rc = bt_rc.replace(b"--serial /dev/hvc0", b"--serial /dev/asahi_bt_hci")
         add(f"etc/init/{bt_svc}.rc", bt_rc, bt_lbl, bt_mode)
+
+    for rc_path in list(files.keys()):
+        if rc_path.startswith("etc/init/") and rc_path.endswith(".rc"):
+            rc_bytes, rc_lbl, rc_mode = files[rc_path]
+            if b"    console ttyAMA0\n" in rc_bytes:
+                add(rc_path, rc_bytes.replace(b"    console ttyAMA0\n", b""), rc_lbl, rc_mode)
 
     # 6. Switch vendor build.prop to Asahi AGX GLES + Honeykrisp Vulkan + bare-metal properties
     b_prop, b_lbl, b_mode = files["build.prop"]
