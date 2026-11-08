@@ -112,10 +112,21 @@ int main(int argc, char **argv) {
         add_allow_rule(&p, "hal_bluetooth_default", "hci_attach_dev", "lnk_file", lnk_ro, 2);
         add_allow_rule(&p, "hal_bluetooth_default", "hci_attach_dev", "chr_file", chr_rw, 5);
         add_allow_rule(&p, "hal_bluetooth_default", "devpts", "chr_file", chr_rw, 5);
+        /* Allow Lights HAL & Health HAL to access Apple Silicon backlight (apple-panel-bl) and SMC battery */
+        const char *sys_rw[] = {"read", "write", "open", "getattr"};
+        const char *light_targets[] = {"sysfs", "sysfs_leds", "sysfs_gpu", "vendor_sysfs_graphics"};
+        for (unsigned i = 0; i < 4; i++) {
+            add_allow_rule(&p, "hal_light_default", light_targets[i], "file", sys_rw, 4);
+            add_allow_rule(&p, "hal_light_default", light_targets[i], "dir", dir_ro, 4);
+            add_allow_rule(&p, "hal_light_default", light_targets[i], "lnk_file", lnk_ro, 2);
+            add_allow_rule(&p, "hal_health_default", light_targets[i], "file", sys_ro, 3);
+            add_allow_rule(&p, "hal_health_default", light_targets[i], "dir", dir_ro, 4);
+            add_allow_rule(&p, "hal_health_default", light_targets[i], "lnk_file", lnk_ro, 2);
+        }
         /* Allow shell / terminal apps to connect to the workstation root PTY daemon */
         add_allow_rule(&p, "shell", "socket_device", "sock_file", chr_rw, 4);
         add_allow_rule(&p, "shell", "init", "unix_stream_socket", sock_rw, 4);
-        printf("Added bare-metal Apple Silicon SELinux rules (gpu_device, sysfs_gpu, devpts, workstation).\n");
+        printf("Added bare-metal Apple Silicon SELinux rules (gpu_device, sysfs_gpu, lights, health, devpts, workstation).\n");
     }
 
     f.fp = fopen(argv[2], "wb");

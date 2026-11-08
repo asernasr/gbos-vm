@@ -86,6 +86,53 @@ def patch_minigbm_dt_needed(minigbm_bytes: bytes) -> bytes:
     return bytes(b)
 
 
+def patch_wifi_hal_for_brcmfmac(wifi_hal_bytes: bytes) -> bytes:
+    """Adapt stock /vendor/lib64/libwifi-hal.so so DriverTool and wifi_load_driver succeed
+    on Apple Silicon's always-loaded Broadcom brcmfmac (cfg80211/nl80211 wlan0) without
+    requiring Qualcomm's /dev/wlan or /sys/module/wlan/parameters/fwpath nodes.
+    """
+    b = bytearray(wifi_hal_bytes)
+    MOV_W0_0 = 0x52800000
+    MOV_W0_1 = 0x52800020
+    RET = 0xD65F03C0
+    patches = [
+        # DriverTool C++ methods (return bool: 1=true, 0=false)
+        (0x34B30, MOV_W0_1),  # DriverTool::LoadDriver() -> true
+        (0x34B50, MOV_W0_1),  # DriverTool::UnloadDriver() -> true
+        (0x34B70, MOV_W0_1),  # DriverTool::IsDriverLoaded() -> true
+        (0x34B90, MOV_W0_0),  # DriverTool::IsFirmwareModeChangeNeeded(int) -> false
+        (0x34BB0, MOV_W0_1),  # DriverTool::ChangeFirmwareMode(int) -> true
+        # Legacy C driver state helpers (return 0=success or 1=loaded)
+        (0x909C0, MOV_W0_0),  # wifi_change_driver_state(const char*) -> 0
+        (0x90CE0, MOV_W0_1),  # is_wifi_driver_loaded() -> 1
+        (0x90D60, MOV_W0_0),  # wifi_load_driver() -> 0
+        (0x90E10, MOV_W0_0),  # wifi_unload_driver() -> 0
+        (0x90F10, MOV_W0_0),  # wifi_change_fw_path(const char*) -> 0
+    ]
+    for off, mov_insn in patches:
+        struct.pack_into("<II", b, off, mov_insn, RET)
+    return bytes(b)
+
+
+def patch_lights_hal_for_apple_backlight(lights_hal_bytes: bytes) -> bytes:
+    """Patch /vendor/bin/hw/android.hardware.lights-service.android-desktop so native
+    Android Display Brightness, Screen Dimming, Lockscreen Sleep, and Screen Timeout
+    drive Apple Silicon's /sys/class/backlight/apple-panel-bl/ directly.
+    """
+    old_lcd = b"/sys/class/backlight/backlight-lcd0/"
+    new_lcd = b"/sys/class/backlight/apple-panel-bl/"
+    assert len(old_lcd) == len(new_lcd) == 36
+    assert old_lcd in lights_hal_bytes
+    lights_hal_bytes = lights_hal_bytes.replace(old_lcd, new_lcd)
+
+    old_intel = b"/sys/class/backlight/intel_backlight/"
+    new_apple = b"/sys/class/backlight/apple_backlight/"
+    assert len(old_intel) == len(new_apple) == 37
+    assert old_intel in lights_hal_bytes
+    lights_hal_bytes = lights_hal_bytes.replace(old_intel, new_apple)
+    return lights_hal_bytes
+
+
 APPLE_TRACKPAD_IDC = b"""# Apple Silicon SPI / MTP Multi-Touch Force Touch Trackpad Configuration
 # Configures desktop cursor navigation and multi-finger trackpad gestures.
 touch.deviceType = pointer
@@ -245,6 +292,10 @@ on init
     restorecon_recursive /sys/class/backlight
     restorecon_recursive /sys/class/power_supply
     restorecon_recursive /sys/class/drm
+    chown system system /sys/class/backlight/apple-panel-bl/brightness
+    chmod 0664 /sys/class/backlight/apple-panel-bl/brightness
+    chown system system /sys/class/backlight/apple_backlight/brightness
+    chmod 0664 /sys/class/backlight/apple_backlight/brightness
     setprop vendor.asahi.display.brightness 180
     start asahi-speakersafetyd
     start asahi-hw-daemon
@@ -253,6 +304,18 @@ on init
 on post-fs-data
     mkdir /data/asahi-linux 0755 root root
     mkdir /data/local/root-home 0700 root root
+    # Prepare Wi-Fi HAL & wpa_supplicant runtime directories for Broadcom BCM4377 (brcmfmac wlan0)
+    mkdir /dev/socket/wifihal 0770 wifi wifi
+    chmod 2770 /dev/socket/wifihal
+    mkdir /data/vendor/wifi 0770 wifi wifi
+    mkdir /data/vendor/wifi/sockets 0770 wifi wifi
+    mkdir /data/vendor/wifi/hostapd 0770 wifi wifi
+    mkdir /data/vendor/wifi/hostapd/ctrl 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa_supplicant 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
+    setprop wifi.interface wlan0
+    setprop wlan.driver.status ok
 
 on property:vendor.asahi.bt.ready=1
     start vendor.bluetooth-aidl-qti
@@ -362,9 +425,38 @@ def apply(add, original, files):
     ]:
         add(f"usr/keylayout/{kl_name}", APPLE_KEYBOARD_KL, "vendor_configs_file")
 
-    # 5. Update Bluetooth HAL service to accept either /dev/asahi_bt_hci (bare-metal BCM4377) or /dev/hvc0
-    # and strip QEMU-only `console ttyAMA0` from init .rc services (such as vm-offline-desktop.rc)
-    # so Android init never aborts service launch on bare-metal Apple Silicon where PL011 ttyAMA0 is absent.
+    # 5. Patch stock Wi-Fi HAL (libwifi-hal.so) for Broadcom brcmfmac (wlan0) and
+    #    Lights HAL (android.hardware.lights-service.android-desktop) for apple-panel-bl
+    #    so the first-boot Googlebook Setup Wizard, Lockscreen, and Screen Timeout work natively.
+    add(
+        "lib64/libwifi-hal.so",
+        patch_wifi_hal_for_brcmfmac(original("lib64/libwifi-hal.so")),
+        "vendor_file",
+    )
+    add(
+        "bin/hw/android.hardware.lights-service.android-desktop",
+        patch_lights_hal_for_apple_backlight(
+            original("bin/hw/android.hardware.lights-service.android-desktop")
+        ),
+        "hal_light_default_exec",
+        0o755,
+    )
+
+    # 6. Remove QEMU-only guest helpers (including vm-offline-desktop) so bare-metal
+    #    Googlebook OS runs its normal Setup Wizard, Lockscreen, and Screen Timeout.
+    for vm_only in [
+        "etc/init/vm-offline-desktop.rc",
+        "bin/vm-offline-desktop.sh",
+        "etc/init/vm-host-control.rc",
+        "bin/vm-host-control.sh",
+        "etc/init/vm-input.rc",
+        "bin/vm-input-service.sh",
+        "etc/init/vm-diagnostic-log.rc",
+    ]:
+        files.pop(vm_only, None)
+
+    # 7. Update Bluetooth HAL service to accept /dev/asahi_bt_hci (bare-metal BCM4377)
+    #    and strip QEMU-only `console ttyAMA0` from any remaining init .rc services.
     bt_svc = "android.hardware.bluetooth@aidl-service-qti"
     if f"etc/init/{bt_svc}.rc" in files:
         bt_rc, bt_lbl, bt_mode = files[f"etc/init/{bt_svc}.rc"]
