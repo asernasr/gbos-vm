@@ -29,7 +29,8 @@ CMDLINE = ('console=ttyAMA0,115200 earlycon=pl011,0x9000000 panic=0 root=/dev/ra
            'androidboot.vbmeta.device_state=unlocked androidboot.verifiedbootstate=orange '
            'androidboot.veritymode=enforcing printk.devkmsg=on '
            'androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none '
-           'androidboot.vendor.apex.com.android.hardware.audio.desktop=none loglevel=3')
+           'androidboot.vendor.apex.com.android.hardware.audio.desktop=none loglevel=3 '
+           'androidboot.fake_battery=1')
 
 
 def find_netsimd():
