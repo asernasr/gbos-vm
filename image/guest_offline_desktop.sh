@@ -23,6 +23,11 @@ settings --user "$vm_user" put secure user_setup_complete 1
 pm disable-user --user "$vm_user" com.google.android.setupwizard
 pm disable-user --user "$vm_user" com.google.android.desktop.setupwizard
 svc power stayon true
+settings put secure lockscreen.disabled 1
+settings --user 0 put secure lockscreen.disabled 1
+settings --user "$vm_user" put secure lockscreen.disabled 1
+settings put system screen_off_timeout 2147483647
+settings --user "$vm_user" put system screen_off_timeout 2147483647
 am start --user "$vm_user" -a android.intent.action.MAIN -c android.intent.category.HOME -p com.google.android.apps.nexuslauncher
 settings get global device_provisioned
 settings --user "$vm_user" get secure user_setup_complete

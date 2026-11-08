@@ -117,6 +117,7 @@ if '--quiet-absent-hardware' in sys.argv:
  add('etc/init/vm-absent-hardware.rc',b'''on early-init
     stop android.system.desktop.security.gscd
     stop vendor.secretkeeper.trusty
+    stop trusty_security_vm_launcher
 ''','vendor_configs_file')
 if '--host-control' in sys.argv:
  # Fixed-verb control channel (power off, paste, density) read from the serial console.

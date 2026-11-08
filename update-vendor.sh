@@ -28,6 +28,7 @@ ln -sf "$WORK/cuttlefish/graphics/extracted" "$WS/artifacts/graphics-port-review
 ln -sf "$WORK/cuttlefish/graphics/cf-composer" "$WS/artifacts/graphics-port-review/cf-composer"
 ln -sf "$WORK/cuttlefish/modules" "$WS/artifacts/cuttlefish-arm17/modules"
 ln -sf "$WORK/cuttlefish/audio-config" "$WS/artifacts/cuttlefish-audio-config"
+ln -sf "$WORK/cuttlefish/bluetooth" "$WS/artifacts/cuttlefish-bluetooth"
 ln -sf "$(brew --prefix erofs-utils)/bin" "$WS/experiments/erofs-utils/1.9.4/bin"
 ln -sf "$(brew --prefix e2fsprogs)/sbin" "$WS/experiments/ext4-tools/e2fsprogs/1.47.4/sbin"
 export GOOGLEBOOK_GUEST_DIR="$GUEST" GOOGLEBOOK_TOOLS_DIR="$TOOLS"
@@ -40,7 +41,7 @@ python3 scripts/make_mica_gpu_initrd.py
 say "Rebuilding vendor partition overlay with updated guest scripts"
 python3 scripts/make_mica_security_port.py base --graphics --audio --vm-compat --locksettings --offline-desktop \
   --quiet-diagnostics --runtime-diagnostics --crash-diagnostics --venus --vulkan-desktop --quiet-absent-hardware \
-  --host-control --host-input ${GBOS_IMAGE_FLAGS:-}
+  --host-control --host-input --bluetooth ${GBOS_IMAGE_FLAGS:-}
 
 say "Grafting vendor partition into $IMAGE_DIR/googlebook.raw"
 python3 -c "
