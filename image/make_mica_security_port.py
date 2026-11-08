@@ -183,6 +183,10 @@ if '--vulkan-desktop' in sys.argv:
   b=b.replace(before,(k+'='+new+'\n').encode())
  add('build.prop',b,label,mode)
  (O/'vulkan-desktop-experiment.json').write_text(json.dumps({'status':'experimental; Vulkan transfer probe passed, compositor compatibility unverified','properties':{k:v[1] for k,v in props.items()}})+'\n')
+if '--asahi-baremetal' in sys.argv:
+ assert '--graphics' in sys.argv
+ from mica_asahi_port import apply as asahi_baremetal
+ old,new=asahi_baremetal(add,original,files);extra_dirs+=old;new_dirs+=new
 
 if '--full-redraw' in sys.argv:
  # A/B experiment, not the default: distinguish guest buffer-age/partial
@@ -212,7 +216,9 @@ if '--vm-compat' in sys.argv:
  # Keep A/B boot-control behaviour without the ChromeOS firmware calls.
  add('bin/hw/android.hardware.boot-service.android-desktop',(R/'artifacts/security-port-review/boot-service.default').read_bytes(),'hal_bootctl_default_exec',0o755)
  (O/'original-policy').write_bytes(original('etc/selinux/precompiled_sepolicy'))
- subprocess.run([str(TOOLS/'guest_graphics_memfd_policy' if TOOLS else R/'scripts/guest_graphics_memfd_policy'),str(O/'original-policy'),str(O/'graphics-policy')],check=True)
+ pol_cmd=[str(TOOLS/'guest_graphics_memfd_policy' if TOOLS else R/'scripts/guest_graphics_memfd_policy'),str(O/'original-policy'),str(O/'graphics-policy')]
+ if '--asahi-baremetal' in sys.argv:pol_cmd.append('--asahi-baremetal')
+ subprocess.run(pol_cmd,check=True)
  m=metadata(raw,'/etc/selinux/precompiled_sepolicy',off)
  add('etc/selinux/precompiled_sepolicy',(O/'graphics-policy').read_bytes(),m['xattrs']['security.selinux'].decode().split(':')[2],m['mode']&0o7777)
  (O/'vm-compat.json').write_text(json.dumps({'boot_control':'official AOSP default, original service identity','selinux':'enforcing; only three observed graphics clients get read/write/map/getattr on allocator memfd buffers'})+'\n')
@@ -315,11 +321,22 @@ if v.stat().st_size>partsize:
  (O/'relocation.json').write_text(json.dumps(relocate(copy,v),indent=2)+'\n')
 else:
  with copy.open('r+b') as f:f.seek(off);f.write(v.read_bytes());f.write(bytes(partsize-v.stat().st_size))
+if '--asahi-baremetal' in sys.argv:
+ p16_dir=(GUEST.parent if GUEST else R/'work')/'asahi-partitions'
+ if (p16_dir/'metadata.16k.img').exists() and (p16_dir/'persist.16k.img').exists():
+  with copy.open('r+b') as f:
+   f.seek(46989312);f.write((p16_dir/'metadata.16k.img').read_bytes())
+   f.seek(13709312);f.write((p16_dir/'persist.16k.img').read_bytes())
 base=R/'artifacts/mica/normal'
 ram=subprocess.check_output(['lz4','-d','-c',str(base/'virtio_gpu_signed_transport_initrd.img')])
 entries=read((base/'vendor_0_platform.cpio').read_bytes());name='first_stage_ramdisk/fstab.android-desktop'
 mode,b=entries[name];s=b.decode();s='\n'.join(l.replace(',avb=vbmeta','') if l.startswith('vendor ') else l for l in s.splitlines())+'\n'
-ram+=write({name:(mode,s.encode())})
+extra_cpio={name:(mode,s.encode())}
+if '--asahi-baremetal' in sys.argv:
+ pre_init=(GUEST/'asahi-bin/pre_init_asahi' if GUEST else R/'work/guest/asahi-bin/pre_init_asahi').read_bytes()
+ extra_cpio['init.real']=(0o120777,b'/system/bin/init')
+ extra_cpio['init']=(0o100755,pre_init)
+ram+=write(extra_cpio)
 (O/'initrd.img').write_bytes(subprocess.check_output(['lz4','-l','-c'],input=ram))
 (O/'manifest.json').write_text(json.dumps({'source':'official Android CI 16373615 software KeyMint','changed_mount':'vendor only; stock AVB removed only for modified vendor filesystem','selinux':('enforcing; three graphics-client memfd sharing rules added' if '--vm-compat' in sys.argv else 'enforcing, policy unchanged'),'encryption':'unchanged','files':{n:{'sha256':hashlib.sha256(b).hexdigest(),'label':label,'mode':oct(mode)} for n,(b,label,mode) in files.items()},'vendor_bytes':v.stat().st_size},indent=2)+'\n')
 print(O)

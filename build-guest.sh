@@ -85,6 +85,106 @@ ninja -j "$JOBS" -C "$WORK/build/mesa-venus" src/virtio/vulkan/libvulkan_virtio.
   || { tail -20 "$WORK/build/mesa-venus.build.log"; die "Mesa Venus build failed"; }
 cp "$WORK/build/mesa-venus/src/virtio/vulkan/libvulkan_virtio.so" "$WORK/guest/libvulkan_virtio.so"
 
+say "Mesa Asahi AGX GLES + Honeykrisp Vulkan driver (bare-metal Apple Silicon)"
+ASAHI_SRC="$WORK/src/mesa-26.2.4-asahi"
+ASAHI_PATCH_ID="$(shasum -a 256 "$ROOT/patches/mesa-asahi-android.patch" | cut -d' ' -f1)"
+if [ "$(cat "$ASAHI_SRC/.gbos-patch" 2>/dev/null)" != "$ASAHI_PATCH_ID" ]; then
+  rm -rf "$ASAHI_SRC" "$WORK/build/mesa-asahi-gles"
+  cp -c -R "$MESA_SRC" "$ASAHI_SRC" 2>/dev/null || cp -R "$MESA_SRC" "$ASAHI_SRC"
+  patch -s -p1 -d "$ASAHI_SRC" < "$ROOT/patches/mesa-asahi-android.patch"
+  echo "$ASAHI_PATCH_ID" > "$ASAHI_SRC/.gbos-patch"
+fi
+if [ ! -x "$WORK/tools/mesa-clc/bin/mesa_clc" ] || [ ! -x "$WORK/tools/mesa-clc/bin/vtn_bindgen2" ] || [ ! -x "$WORK/tools/mesa-clc/bin/asahi_clc" ]; then
+  export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$PATH"
+  PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/llvm/lib/pkgconfig:/opt/homebrew/opt/spirv-llvm-translator/lib/pkgconfig:/opt/homebrew/opt/spirv-tools/lib/pkgconfig" \
+  LDFLAGS="-L/opt/homebrew/opt/llvm/lib -L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++" \
+  CPPFLAGS="-I/opt/homebrew/opt/llvm/include" \
+  meson setup "$WORK/build/mesa-host-clc" "$ASAHI_SRC" -Dbuildtype=release -Dplatforms= -Dgallium-drivers= \
+    -Dvulkan-drivers= -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false -Dgles1=disabled -Dgles2=disabled \
+    -Dllvm=enabled -Dshared-llvm=enabled -Dmesa-clc=enabled -Dinstall-mesa-clc=true -Dtools=asahi -Dinstall-precomp-compiler=true \
+    >"$WORK/build/mesa-host-clc.configure.log" 2>&1
+  ninja -j "$JOBS" -C "$WORK/build/mesa-host-clc" src/compiler/clc/mesa_clc src/compiler/spirv/vtn_bindgen2 src/asahi/clc/asahi_clc \
+    >"$WORK/build/mesa-host-clc.build.log" 2>&1 || { tail -20 "$WORK/build/mesa-host-clc.build.log"; die "Host mesa_clc build failed"; }
+  mkdir -p "$WORK/tools/mesa-clc/bin"
+  cp -f "$WORK/build/mesa-host-clc/src/compiler/clc/mesa_clc" \
+        "$WORK/build/mesa-host-clc/src/compiler/spirv/vtn_bindgen2" \
+        "$WORK/build/mesa-host-clc/src/asahi/clc/asahi_clc" "$WORK/tools/mesa-clc/bin/"
+fi
+cat > "$WORK/android-aarch64-asahi.cross" <<CROSS_ASAHI
+[constants]
+ndk = '$ANDROID_NDK/toolchains/llvm/prebuilt/darwin-x86_64'
+[binaries]
+c = [ndk / 'bin/aarch64-linux-android35-clang']
+cpp = [ndk / 'bin/aarch64-linux-android35-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
+ar = ndk / 'bin/llvm-ar'
+strip = ndk / 'bin/llvm-strip'
+c_ld = 'lld'
+cpp_ld = 'lld'
+pkg-config = '$(command -v pkg-config)'
+mesa_clc = '$WORK/tools/mesa-clc/bin/mesa_clc'
+vtn_bindgen2 = '$WORK/tools/mesa-clc/bin/vtn_bindgen2'
+asahi_clc = '$WORK/tools/mesa-clc/bin/asahi_clc'
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'armv8'
+endian = 'little'
+[properties]
+needs_exe_wrapper = true
+pkg_config_libdir = '$WORK/android-pkgconfig'
+CROSS_ASAHI
+[ -f "$WORK/build/mesa-asahi-gles/build.ninja" ] || meson setup "$WORK/build/mesa-asahi-gles" "$ASAHI_SRC" \
+  --cross-file "$WORK/android-aarch64-asahi.cross" --buildtype=release -Dforce_fallback_for=libdrm,expat \
+  -Dallow-fallback-for=libdrm -Dplatforms=android -Dplatform-sdk-version=35 -Dandroid-stub=true \
+  -Dandroid-libbacktrace=disabled -Dllvm=disabled -Dglx=disabled -Dgbm=disabled -Dvideo-codecs= \
+  -Dgallium-va=disabled -Dzstd=disabled -Dmesa-clc=system -Dprecomp-compiler=system \
+  -Dgallium-drivers=asahi -Dvulkan-drivers=asahi -Degl=enabled -Dgles1=enabled -Dgles2=enabled -Dopengl=true \
+  -Degl-lib-suffix=_asahi -Dgles-lib-suffix=_asahi >"$WORK/build/mesa-asahi.configure.log" 2>&1
+ninja -j "$JOBS" -C "$WORK/build/mesa-asahi-gles" \
+  src/egl/libEGL_asahi.so src/mesa/glapi/es1api/libGLESv1_CM_asahi.so \
+  src/mesa/glapi/es2api/libGLESv2_asahi.so src/gallium/targets/dri/libgallium_dri.so \
+  src/asahi/vulkan/libvulkan_asahi.so subprojects/libdrm-2.4.133/libdrm.so \
+  >"$WORK/build/mesa-asahi.build.log" 2>&1 || { tail -20 "$WORK/build/mesa-asahi.build.log"; die "Mesa Asahi build failed"; }
+mkdir -p "$WORK/guest/mesa-asahi"
+for pair in src/egl/libEGL_asahi.so src/mesa/glapi/es1api/libGLESv1_CM_asahi.so src/mesa/glapi/es2api/libGLESv2_asahi.so \
+            src/gallium/targets/dri/libgallium_dri.so src/asahi/vulkan/libvulkan_asahi.so subprojects/libdrm-2.4.133/libdrm.so; do
+  "$NDK_BIN/llvm-strip" --strip-unneeded -o "$WORK/guest/mesa-asahi/$(basename "$pair")" "$WORK/build/mesa-asahi-gles/$pair"
+done
+cp -f "$WORK/guest/mesa-asahi/libvulkan_asahi.so" "$WORK/guest/libvulkan_asahi.so"
+
+say "Apple Silicon bare-metal HAL shims, speaker safety DSP, hardware & workstation daemons"
+mkdir -p "$WORK/guest/asahi-bin"
+"$NDK_BIN/aarch64-linux-android35-clang" -O2 -Wall -Wextra -fPIC -shared \
+  -Wl,-soname,libasahi_dcp_bm.so \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
+  "$ROOT/guest/asahi_minigbm_dcp_shim.c" -ldl -llog \
+  -o "$WORK/guest/asahi-bin/libasahi_dcp_bm.so"
+"$NDK_BIN/llvm-strip" --strip-unneeded "$WORK/guest/asahi-bin/libasahi_dcp_bm.so"
+
+"$NDK_BIN/aarch64-linux-android35-clang" -O2 -Wall -Wextra -fPIE -pie \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
+  "$ROOT/guest/asahi_audio_dsp_safetyd.c" -lm -llog \
+  -o "$WORK/guest/asahi-bin/asahi-speakersafetyd"
+"$NDK_BIN/llvm-strip" --strip-unneeded "$WORK/guest/asahi-bin/asahi-speakersafetyd"
+
+"$NDK_BIN/aarch64-linux-android35-clang" -O2 -Wall -Wextra -fPIE -pie \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
+  "$ROOT/guest/asahi_hw_daemon.c" -llog \
+  -o "$WORK/guest/asahi-bin/asahi-hw-daemon"
+"$NDK_BIN/llvm-strip" --strip-unneeded "$WORK/guest/asahi-bin/asahi-hw-daemon"
+
+"$NDK_BIN/aarch64-linux-android35-clang" -O2 -Wall -Wextra -fPIE -pie \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
+  "$ROOT/guest/asahi_workstation_shell.c" \
+  -o "$WORK/guest/asahi-bin/workstation-shell"
+"$NDK_BIN/llvm-strip" --strip-unneeded "$WORK/guest/asahi-bin/workstation-shell"
+
+"$NDK_BIN/aarch64-linux-android35-clang" -O2 -Wall -Wextra -static \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
+  "$ROOT/guest/pre_init_asahi.c" \
+  -o "$WORK/guest/asahi-bin/pre_init_asahi"
+"$NDK_BIN/llvm-strip" --strip-unneeded "$WORK/guest/asahi-bin/pre_init_asahi"
+
 say "Pointer and clipboard helper"
 rm -rf "$WORK/build/input"; mkdir -p "$WORK/build/input"
 "$JAVA_HOME/bin/javac" -source 11 -target 11 -Xlint:-options -cp "$ANDROID_JAR" -d "$WORK/build/input" "$ROOT/guest/input/vm/Input.java"
