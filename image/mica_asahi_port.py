@@ -133,6 +133,339 @@ def patch_lights_hal_for_apple_backlight(lights_hal_bytes: bytes) -> bytes:
     return lights_hal_bytes
 
 
+def patch_camera_hal_for_apple_isp(cam_hal_bytes: bytes) -> bytes:
+    """Patch /vendor/bin/hw/android.hardware.camera.provider-usb-service.android-desktop
+    so that Apple Silicon's built-in FaceTime HD Camera (/dev/video0, uevent line
+    'DRIVER=apple-isp') takes the built-in non-USB V4L2 camera path (0x4e798, matching
+    'vivid:vivid' in /vendor/etc/camera/internal_usb_camera_info.txtpb as FACING_FRONT)
+    while preserving external USB UVC webcam ('PRODUCT=...') support.
+    """
+    b = bytearray(cam_hal_bytes)
+    orig_insns = struct.unpack_from("<15I", b, 0x4E4BC)
+    assert orig_insns[0] == 0xF100315F and orig_insns[14] == 0x140000A9
+    new_insns = [
+        0xF9004BEA,  # 4e4bc: str  x10, [sp, #0x90]
+        0xF100315F,  # 4e4c0: cmp  x10, #0xc
+        0x540001A3,  # 4e4c4: b.lo 0x4e4f8 (if len < 12, go to cmp x10, #8)
+        0xF94002C8,  # 4e4c8: ldr  x8, [x22]
+        0xD28A4889,  # 4e4cc: mov  x9, #0x5244 ('D','R')
+        0xF2AAC929,  # 4e4d0: movk x9, #0x5649, lsl #16 ('I','V')
+        0xF2CA48A9,  # 4e4d4: movk x9, #0x5245, lsl #32 ('E','R')
+        0xF2EC27A9,  # 4e4d8: movk x9, #0x613d, lsl #48 ('=','a' -> "DRIVER=a")
+        0xEB09011F,  # 4e4dc: cmp  x8, x9
+        0x540015C0,  # 4e4e0: b.eq 0x4e798 (DRIVER=apple-isp -> built-in V4L2 camera)
+        0xF2EEC7A9,  # 4e4e4: movk x9, #0x763d, lsl #48 ('=','v' -> "DRIVER=v")
+        0xEB09011F,  # 4e4e8: cmp  x8, x9
+        0x54001560,  # 4e4ec: b.eq 0x4e798 (DRIVER=vivid -> built-in V4L2 camera)
+        0x14000004,  # 4e4f0: b    0x4e500 (otherwise check PRODUCT=)
+        0xD503201F,  # 4e4f4: nop
+    ]
+    struct.pack_into("<15I", b, 0x4E4BC, *new_insns)
+    return bytes(b)
+
+
+APPLE_ISP_CAMERA_INFO_TXTPB = b"""
+camera_modules {
+  key: "vivid:vivid"
+  value {
+    lens_info {
+      available_focal_lengths: 1.85
+      available_apertures: 2.2
+      minimum_focus_distance: 0.2
+      optimal_focus_distance: 0.5
+    }
+    sensor_info {
+      physical_size {
+        width: 3.20
+        height: 1.80
+      }
+      pixel_array_size {
+        width: 1920
+        height: 1080
+      }
+      active_array {
+        left: 0
+        top: 0
+        right: 1920
+        bottom: 1080
+      }
+    }
+    enable_face_detection: true
+    facing: FACING_FRONT
+  }
+}
+"""
+
+ASAHI_MEDIA_CODECS_HAMOA_XML = b"""<?xml version="1.0" encoding="utf-8" ?>
+<MediaCodecs>
+    <Include href="media_codecs_google_audio.xml" />
+    <Include href="media_codecs_google_telephony.xml" />
+    <Include href="media_codecs_google_c2.xml" />
+</MediaCodecs>
+"""
+
+ASAHI_MEDIA_CODECS_GOOGLE_C2_VIDEO_XML = b"""<?xml version="1.0" encoding="utf-8" ?>
+<!-- Apple Silicon (M1 Firestorm/Icestorm NEON) 4K60 / 1080p240 Codec2 Video Configuration -->
+<Included>
+    <Decoders>
+        <MediaCodec name="c2.android.mpeg4.decoder" type="video/mp4v-es">
+            <Alias name="OMX.google.mpeg4.decoder" />
+            <Limit name="size" min="2x2" max="1920x1088" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="blocks-per-second" range="12-489600" />
+            <Limit name="bitrate" range="1-60000000" />
+            <Feature name="adaptive-playback" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.h263.decoder" type="video/3gpp">
+            <Alias name="OMX.google.h263.decoder" />
+            <Limit name="size" min="2x2" max="864x480" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="bitrate" range="1-16000000" />
+            <Feature name="adaptive-playback" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.avc.decoder" type="video/avc">
+            <Alias name="OMX.google.h264.decoder" />
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-36864" />
+            <Limit name="blocks-per-second" range="1-2211840" />
+            <Limit name="bitrate" range="1-160000000" />
+            <Limit name="frame-rate" range="1-240" />
+            <Feature name="adaptive-playback" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="240" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.hevc.decoder" type="video/hevc">
+            <Alias name="OMX.google.hevc.decoder" />
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="8x8" />
+            <Limit name="block-count" range="1-196608" />
+            <Limit name="blocks-per-second" range="1-8847360" />
+            <Limit name="bitrate" range="1-160000000" />
+            <Limit name="frame-rate" range="1-240" />
+            <Feature name="adaptive-playback" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="240" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp8.decoder" type="video/x-vnd.on2.vp8">
+            <Alias name="OMX.google.vp8.decoder" />
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="1x1" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-36864" />
+            <Limit name="blocks-per-second" range="1-2211840" />
+            <Limit name="bitrate" range="1-100000000" />
+            <Limit name="frame-rate" range="1-240" />
+            <Feature name="adaptive-playback" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-1920x1080" value="240" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp9.decoder" type="video/x-vnd.on2.vp9">
+            <Alias name="OMX.google.vp9.decoder" />
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="1x1" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-36864" />
+            <Limit name="blocks-per-second" range="1-2211840" />
+            <Limit name="bitrate" range="1-160000000" />
+            <Limit name="frame-rate" range="1-240" />
+            <Feature name="adaptive-playback" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="240" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.av1.decoder" type="video/av01" variant="slow-cpu,!slow-cpu">
+            <Limit name="alignment" value="1x1" />
+            <Limit name="block-size" value="16x16" />
+            <Variant name="!slow-cpu">
+                <Limit name="size" min="2x2" max="4096x4096" />
+                <Limit name="block-count" range="1-36864" />
+                <Limit name="blocks-per-second" range="1-2211840" />
+                <Limit name="bitrate" range="1-160000000" />
+            </Variant>
+            <Variant name="slow-cpu">
+                <Limit name="size" min="2x2" max="4096x4096" />
+                <Limit name="block-count" range="1-36864" />
+                <Limit name="blocks-per-second" range="1-2211840" />
+                <Limit name="bitrate" range="1-160000000" />
+            </Variant>
+            <Feature name="adaptive-playback" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="240" />
+            <Attribute name="software-codec" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.av1-dav1d.decoder" type="video/av01">
+            <Limit name="size" min="2x2" max="4096x4096" />
+            <Limit name="alignment" value="1x1" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-36864" />
+            <Limit name="blocks-per-second" range="1-2211840" />
+            <Limit name="bitrate" range="1-160000000" />
+            <Feature name="adaptive-playback" />
+            <Limit name="performance-point-3840x2160" value="60" />
+            <Limit name="performance-point-2560x1440" value="120" />
+            <Limit name="performance-point-1920x1080" value="240" />
+            <Limit name="performance-point-1280x720" value="240" />
+            <Attribute name="software-codec" />
+        </MediaCodec>
+    </Decoders>
+    <Encoders>
+        <MediaCodec name="c2.android.h263.encoder" type="video/3gpp">
+            <Alias name="OMX.google.h263.encoder" />
+            <Limit name="size" min="176x144" max="176x144" />
+            <Limit name="alignment" value="16x16" />
+            <Limit name="bitrate" range="1-128000" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.avc.encoder" type="video/avc">
+            <Alias name="OMX.google.h264.encoder" />
+            <Limit name="size" min="16x16" max="3840x2160" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-32400" />
+            <Limit name="blocks-per-second" range="1-972000" />
+            <Limit name="bitrate" range="1-48000000" />
+            <Feature name="intra-refresh" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.hevc.encoder" type="video/hevc">
+            <Limit name="size" min="2x2" max="1920x1080" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="8x8" />
+            <Limit name="block-count" range="1-32400" />
+            <Limit name="blocks-per-second" range="1-972000" />
+            <Limit name="frame-rate" range="1-120" />
+            <Limit name="bitrate" range="1-40000000" />
+            <Limit name="complexity" range="0-10" default="0" />
+            <Limit name="quality" range="0-100" default="80" />
+            <Feature name="bitrate-modes" value="VBR,CBR,CQ" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.mpeg4.encoder" type="video/mp4v-es">
+            <Alias name="OMX.google.mpeg4.encoder" />
+            <Limit name="size" min="16x16" max="176x144" />
+            <Limit name="alignment" value="16x16" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="blocks-per-second" range="12-1485" />
+            <Limit name="bitrate" range="1-64000" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp8.encoder" type="video/x-vnd.on2.vp8">
+            <Alias name="OMX.google.vp8.encoder" />
+            <Limit name="size" min="2x2" max="3840x2160" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-32400" />
+            <Limit name="bitrate" range="1-40000000" />
+            <Feature name="bitrate-modes" value="VBR,CBR" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp9.encoder" type="video/x-vnd.on2.vp9">
+            <Alias name="OMX.google.vp9.encoder" />
+            <Limit name="size" min="2x2" max="3840x2160" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-32400" />
+            <Limit name="bitrate" range="1-40000000" />
+            <Feature name="bitrate-modes" value="VBR,CBR" />
+        </MediaCodec>
+    </Encoders>
+</Included>
+"""
+
+ASAHI_MEDIA_CODECS_PERFORMANCE_XML = b"""<?xml version="1.0" encoding="utf-8" ?>
+<MediaCodecs>
+    <Decoders>
+        <MediaCodec name="c2.android.avc.decoder" type="video/avc" update="true">
+            <Limit name="measured-frame-rate-320x240" range="400-900" />
+            <Limit name="measured-frame-rate-720x480" range="300-600" />
+            <Limit name="measured-frame-rate-1280x720" range="240-500" />
+            <Limit name="measured-frame-rate-1920x1080" range="120-300" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-120" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.hevc.decoder" type="video/hevc" update="true">
+            <Limit name="measured-frame-rate-352x288" range="644-1415" />
+            <Limit name="measured-frame-rate-640x360" range="454-998" />
+            <Limit name="measured-frame-rate-720x480" range="353-776" />
+            <Limit name="measured-frame-rate-1280x720" range="240-518" />
+            <Limit name="measured-frame-rate-1920x1080" range="185-401" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-140" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp8.decoder" type="video/x-vnd.on2.vp8" update="true">
+            <Limit name="measured-frame-rate-320x180" range="550-1850" />
+            <Limit name="measured-frame-rate-640x360" range="250-800" />
+            <Limit name="measured-frame-rate-1280x720" range="200-400" />
+            <Limit name="measured-frame-rate-1920x1080" range="120-240" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-120" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp9.decoder" type="video/x-vnd.on2.vp9" update="true">
+            <Limit name="measured-frame-rate-320x180" range="488-1500" />
+            <Limit name="measured-frame-rate-640x360" range="265-900" />
+            <Limit name="measured-frame-rate-1280x720" range="240-450" />
+            <Limit name="measured-frame-rate-1920x1080" range="120-260" />
+            <Limit name="measured-frame-rate-2560x1440" range="90-180" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-120" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.av1.decoder" type="video/av01" update="true">
+            <Limit name="measured-frame-rate-352x288" range="535-1177" />
+            <Limit name="measured-frame-rate-640x360" range="351-771" />
+            <Limit name="measured-frame-rate-720x480" range="293-644" />
+            <Limit name="measured-frame-rate-1280x720" range="240-480" />
+            <Limit name="measured-frame-rate-1920x1080" range="120-240" />
+            <Limit name="measured-frame-rate-2560x1440" range="90-180" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-120" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.av1-dav1d.decoder" type="video/av01" update="true">
+            <Limit name="measured-frame-rate-352x288" range="1199-2637" />
+            <Limit name="measured-frame-rate-640x360" range="803-1405" />
+            <Limit name="measured-frame-rate-720x480" range="621-1441" />
+            <Limit name="measured-frame-rate-1280x720" range="303-741" />
+            <Limit name="measured-frame-rate-1920x1080" range="160-360" />
+            <Limit name="measured-frame-rate-2560x1440" range="90-180" />
+            <Limit name="measured-frame-rate-3840x2160" range="60-120" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.h263.decoder" type="video/3gpp" update="true">
+            <Limit name="measured-frame-rate-176x144" range="800-2600" />
+            <Limit name="measured-frame-rate-352x288" range="620-1900" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.mpeg4.decoder" type="video/mp4v-es" update="true">
+            <Limit name="measured-frame-rate-176x144" range="865-2800" />
+            <Limit name="measured-frame-rate-480x360" range="728-1564" />
+            <Limit name="measured-frame-rate-1280x720" range="319-714" />
+        </MediaCodec>
+    </Decoders>
+    <Encoders>
+        <MediaCodec name="c2.android.h263.encoder" type="video/3gpp" update="true">
+            <Limit name="measured-frame-rate-176x144" range="693-1401" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.avc.encoder" type="video/avc" update="true">
+            <Limit name="measured-frame-rate-320x240" range="240-980" />
+            <Limit name="measured-frame-rate-720x480" range="256-404" />
+            <Limit name="measured-frame-rate-1280x720" range="120-240" />
+            <Limit name="measured-frame-rate-1920x1080" range="60-120" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp8.encoder" type="video/x-vnd.on2.vp8" update="true">
+            <Limit name="measured-frame-rate-320x180" range="634-805" />
+            <Limit name="measured-frame-rate-640x360" range="189-293" />
+            <Limit name="measured-frame-rate-1280x720" range="60-120" />
+            <Limit name="measured-frame-rate-1920x1080" range="30-115" />
+        </MediaCodec>
+        <MediaCodec name="c2.android.vp9.encoder" type="video/x-vnd.on2.vp9" update="true">
+            <Limit name="measured-frame-rate-320x180" range="618-786" />
+            <Limit name="measured-frame-rate-640x360" range="122-262" />
+            <Limit name="measured-frame-rate-1280x720" range="60-120" />
+            <Limit name="measured-frame-rate-1920x1080" range="30-60" />
+        </MediaCodec>
+    </Encoders>
+</MediaCodecs>
+"""
+
+
 APPLE_TRACKPAD_IDC = b"""# Apple Silicon SPI / MTP Multi-Touch Force Touch Trackpad Configuration
 # Configures desktop cursor navigation and multi-finger trackpad gestures.
 touch.deviceType = pointer
@@ -279,19 +612,30 @@ fi
 ASAHI_BAREMETAL_RC = b"""# Bare-Metal Apple Silicon (MacBookAir10,1 / t8103 / j313) Init Configuration
 
 on early-init
-    # Ensure DRM/KMS (apple-dcp card0 + drm-asahi renderD128) and ALSA permissions
+    # Ensure DRM/KMS (apple-dcp card0 + dcpext card1..3 + drm-asahi renderD128) and V4L2 permissions
     mkdir /dev/dri 0755 system graphics
     chmod 0666 /dev/dri/card0
     chmod 0666 /dev/dri/card1
+    chmod 0666 /dev/dri/card2
+    chmod 0666 /dev/dri/card3
     chmod 0666 /dev/dri/renderD128
     chmod 0666 /dev/dri/renderD129
+    chmod 0666 /dev/dri/renderD130
+    chmod 0666 /dev/video0
+    chmod 0666 /dev/video1
+    chmod 0666 /dev/media0
+    # Ensure 4K60 / 1080p60 MediaCodec & PerformancePoint XML variants are set before post-fs-data
+    setprop vendor.media.target_variant _hamoa
+    setprop ro.media.xml_variant.codecs _hamoa
+    setprop ro.media.xml_variant.codecs_performance _hamoa
 
 on init
-    # Label Apple Silicon SoC GPU, DCP, Backlight, and SMC sysfs nodes
+    # Label Apple Silicon SoC GPU, DCP, ISP Camera, Backlight, and SMC sysfs nodes
     restorecon_recursive /sys/devices/platform/soc
     restorecon_recursive /sys/class/backlight
     restorecon_recursive /sys/class/power_supply
     restorecon_recursive /sys/class/drm
+    restorecon_recursive /sys/class/video4linux
     chown system system /sys/class/backlight/apple-panel-bl/brightness
     chmod 0664 /sys/class/backlight/apple-panel-bl/brightness
     chown system system /sys/class/backlight/apple_backlight/brightness
@@ -304,6 +648,7 @@ on init
 on post-fs-data
     mkdir /data/asahi-linux 0755 root root
     mkdir /data/local/root-home 0700 root root
+    mkdir /data/vendor/mediadrm 0770 media mediadrm
     # Prepare Wi-Fi HAL & wpa_supplicant runtime directories for Broadcom BCM4377 (brcmfmac wlan0)
     mkdir /dev/socket/wifihal 0770 wifi wifi
     chmod 2770 /dev/socket/wifihal
@@ -316,6 +661,7 @@ on post-fs-data
     mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
     setprop wifi.interface wlan0
     setprop wlan.driver.status ok
+    setprop persist.drm.forcel3.enabled true
 
 on property:vendor.asahi.bt.ready=1
     start vendor.bluetooth-aidl-qti
@@ -327,7 +673,7 @@ service asahi-speakersafetyd /vendor/bin/asahi-speakersafetyd
     group root audio system
     seclabel u:r:init:s0
 
-# Apple Silicon hardware bridge: BCM4377 BT HCI PTY, apple-panel-bl, macsmc-battery, lid/jack
+# Apple Silicon hardware bridge: BCM4377 BT HCI PTY, apple-panel-bl, macsmc-battery, lid/jack, dcpext
 service asahi-hw-daemon /vendor/bin/asahi-hw-daemon
     class core
     user root
@@ -425,9 +771,10 @@ def apply(add, original, files):
     ]:
         add(f"usr/keylayout/{kl_name}", APPLE_KEYBOARD_KL, "vendor_configs_file")
 
-    # 5. Patch stock Wi-Fi HAL (libwifi-hal.so) for Broadcom brcmfmac (wlan0) and
-    #    Lights HAL (android.hardware.lights-service.android-desktop) for apple-panel-bl
-    #    so the first-boot Googlebook Setup Wizard, Lockscreen, and Screen Timeout work natively.
+    # 5. Patch stock Wi-Fi HAL (libwifi-hal.so) for Broadcom brcmfmac (wlan0),
+    #    Lights HAL (android.hardware.lights-service.android-desktop) for apple-panel-bl,
+    #    and Camera HAL (android.hardware.camera.provider-usb-service.android-desktop)
+    #    for Apple Silicon's built-in FaceTime HD Camera (apple-isp /dev/video0).
     add(
         "lib64/libwifi-hal.so",
         patch_wifi_hal_for_brcmfmac(original("lib64/libwifi-hal.so")),
@@ -441,8 +788,40 @@ def apply(add, original, files):
         "hal_light_default_exec",
         0o755,
     )
+    add(
+        "bin/hw/android.hardware.camera.provider-usb-service.android-desktop",
+        patch_camera_hal_for_apple_isp(
+            original("bin/hw/android.hardware.camera.provider-usb-service.android-desktop")
+        ),
+        "hal_camera_default_exec",
+        0o755,
+    )
+    add(
+        "etc/camera/internal_usb_camera_info.txtpb",
+        original("etc/camera/internal_usb_camera_info.txtpb") + APPLE_ISP_CAMERA_INFO_TXTPB,
+        "vendor_configs_file",
+    )
 
-    # 6. Remove QEMU-only guest helpers (including vm-offline-desktop) so bare-metal
+    # 6. Install 4K60 / 1080p240 Codec2 Video & PerformancePoint configurations
+    #    (removes the 720p cap on AV1/VP9/AVC/HEVC and disables dead Qualcomm /dev/video32 entries)
+    add(
+        "etc/media_codecs_google_c2_video.xml",
+        ASAHI_MEDIA_CODECS_GOOGLE_C2_VIDEO_XML,
+        "vendor_configs_file",
+    )
+    for mc_name in [
+        "etc/media_codecs.xml",
+        "etc/media_codecs_hamoa.xml",
+        "etc/media_codecs_hamoa_vendor.xml",
+    ]:
+        add(mc_name, ASAHI_MEDIA_CODECS_HAMOA_XML, "vendor_configs_file")
+    for mp_name in [
+        "etc/media_codecs_performance_hamoa.xml",
+        "etc/media_codecs_performance_hamoa_vendor.xml",
+    ]:
+        add(mp_name, ASAHI_MEDIA_CODECS_PERFORMANCE_XML, "vendor_configs_file")
+
+    # 7. Remove QEMU-only guest helpers (including vm-offline-desktop) so bare-metal
     #    Googlebook OS runs its normal Setup Wizard, Lockscreen, and Screen Timeout.
     for vm_only in [
         "etc/init/vm-offline-desktop.rc",
@@ -455,7 +834,7 @@ def apply(add, original, files):
     ]:
         files.pop(vm_only, None)
 
-    # 7. Update Bluetooth HAL service to accept /dev/asahi_bt_hci (bare-metal BCM4377)
+    # 8. Update Bluetooth HAL service to accept /dev/asahi_bt_hci (bare-metal BCM4377)
     #    and strip QEMU-only `console ttyAMA0` from any remaining init .rc services.
     bt_svc = "android.hardware.bluetooth@aidl-service-qti"
     if f"etc/init/{bt_svc}.rc" in files:
@@ -469,7 +848,7 @@ def apply(add, original, files):
             if b"    console ttyAMA0\n" in rc_bytes:
                 add(rc_path, rc_bytes.replace(b"    console ttyAMA0\n", b""), rc_lbl, rc_mode)
 
-    # 6. Switch vendor build.prop to Asahi AGX GLES + Honeykrisp Vulkan + bare-metal properties
+    # 9. Switch vendor build.prop to Asahi AGX GLES + Honeykrisp Vulkan + 4K media + external display
     b_prop, b_lbl, b_mode = files["build.prop"]
     b_prop = b_prop.replace(b"ro.hardware.egl=virgl\n", b"ro.hardware.egl=asahi\n")
     b_prop = b_prop.replace(b"ro.hardware.vulkan=none\n", b"ro.hardware.vulkan=asahi\n")
@@ -480,15 +859,24 @@ def apply(add, original, files):
         b"wifi.interface=wlan0\n"
         b"ro.surface_flinger.max_frame_buffer_acquired_buffers=3\n"
         b"ro.surface_flinger.primary_display_orientation=ORIENTATION_0\n"
+        b"ro.surface_flinger.max_virtual_display_dimension=4096\n"
+        b"vendor.hwc.drm.handle_all_uevents=1\n"
+        b"vendor.wv.oemcrypto.debug.enable_external_display_check=false\n"
+        b"persist.drm.forcel3.enabled=true\n"
+        b"drm.service.enabled=true\n"
+        b"vendor.media.target_variant=_hamoa\n"
+        b"ro.media.xml_variant.codecs=_hamoa\n"
+        b"ro.media.xml_variant.codecs_performance=_hamoa\n"
     )
     add("build.prop", b_prop, b_lbl, b_mode)
 
-    # 7. Label Apple Silicon sysfs & device nodes in vendor_file_contexts and ueventd.rc
+    # 10. Label Apple Silicon sysfs & device nodes in vendor_file_contexts and ueventd.rc
     ctx, ctx_lbl, ctx_mode = files["etc/selinux/vendor_file_contexts"]
     ctx += (
-        b"\n# Bare-metal Apple Silicon (t8103) GPU, DCP, Backlight, SMC & BT PTY contexts\n"
+        b"\n# Bare-metal Apple Silicon (t8103) GPU, DCP, ISP Camera, Backlight, SMC & BT PTY contexts\n"
         b"/sys/devices/platform/soc(/.*)? u:object_r:sysfs_gpu:s0\n"
         b"/sys/class/drm(/.*)? u:object_r:sysfs_gpu:s0\n"
+        b"/sys/class/video4linux(/.*)? u:object_r:sysfs_gpu:s0\n"
         b"/dev/asahi_bt_hci u:object_r:hci_attach_dev:s0\n"
         b"/dev/socket/asahi_workstation u:object_r:socket_device:s0\n"
     )
@@ -500,15 +888,20 @@ def apply(add, original, files):
         else original("etc/ueventd.rc")
     )
     ueventd_orig += (
-        b"\n# Bare-metal Apple Silicon DRM, ALSA, Backlight & Input permissions\n"
+        b"\n# Bare-metal Apple Silicon DRM (dcp + dcpext), V4L2 ISP Camera, ALSA, Backlight & Input\n"
         b"/dev/dri/card0            0666   system     graphics\n"
         b"/dev/dri/card1            0666   system     graphics\n"
+        b"/dev/dri/card2            0666   system     graphics\n"
+        b"/dev/dri/card3            0666   system     graphics\n"
         b"/dev/dri/renderD128       0666   system     graphics\n"
         b"/dev/dri/renderD129       0666   system     graphics\n"
+        b"/dev/dri/renderD130       0666   system     graphics\n"
+        b"/dev/video*               0660   camera     camera\n"
+        b"/dev/media*               0660   camera     camera\n"
         b"/dev/asahi_bt_hci         0660   bluetooth  bluetooth\n"
         b"/dev/snd/*                0660   system     audio\n"
         b"/dev/input/*              0660   root       input\n"
     )
     add("etc/ueventd.rc", ueventd_orig, "vendor_configs_file")
 
-    return ["usr", "usr/idc"], ["usr/keylayout"]
+    return ["etc/camera", "usr", "usr/idc"], ["usr/keylayout"]

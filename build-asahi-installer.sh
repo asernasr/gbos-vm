@@ -16,7 +16,7 @@ ASAHI_IMG_DIR="${GBOS_ASAHI_IMAGE_DIR:-$WORK/asahi-image}"
 OUT="$WORK/asahi-installer"
 ESP="$OUT/esp"
 rm -rf "$OUT"
-mkdir -p "$ESP/m1n1" "$ESP/efi/boot" "$ESP/gbos/dtb/apple" "$ESP/vendorfw" "$OUT/os"
+mkdir -p "$ESP/m1n1" "$ESP/efi/boot" "$ESP/gbos/dtb/apple" "$OUT/os"
 
 say "Populating EFI System Partition (ESP) boot tree"
 cp -f "$ASAHI_IMG_DIR/initrd.img" "$ESP/gbos/initrd.img"
@@ -103,24 +103,32 @@ echo ""
 if [ "${1:-}" = "--install" ]; then
     rm -f "$DIR/os/gbos-asahi-full.zip.tmp" "$DIR/os/gbos-asahi-full.zip"
     TMP="/tmp/asahi-install"
-    rm -rf "$TMP"
     mkdir -p "$TMP"
     cd "$TMP"
-    echo "[1/2] Fetching official Asahi Linux installer framework..."
+    echo "[1/2] Preparing official Asahi Linux installer framework..."
     PKG_VER="$(curl --no-progress-meter -L https://cdn.asahilinux.org/installer/latest)"
-    curl --no-progress-meter -L -o "installer-$PKG_VER.tar.gz" "https://cdn.asahilinux.org/installer/installer-$PKG_VER.tar.gz"
+    if [ ! -f "installer-$PKG_VER.tar.gz" ]; then
+        curl --no-progress-meter -L -o "installer-$PKG_VER.tar.gz" "https://cdn.asahilinux.org/installer/installer-$PKG_VER.tar.gz"
+    fi
     tar xf "installer-$PKG_VER.tar.gz"
     cp -f "$DIR/installer_data.json" "$TMP/installer_data.json"
     # Enable zero-copy local streaming from $REPO_BASE/googlebook.raw (so we never
-    # waste 34 GB of disk space duplicating googlebook.raw into a temporary zip archive)
-    # and keep min_recommended_size = self.min_size (~39.8 GB with stub instead of 2x).
+    # waste 34 GB of disk space duplicating googlebook.raw into a temporary zip archive),
+    # pass dirs_exist_ok=True when copying vendorfw, and allow option 'p' (Repair an
+    # incomplete installation) to resume an interrupted stage-1 OS image extraction.
     OSINSTALL_PY="$TMP/osinstall.py"
     [ -f "$TMP/src/osinstall.py" ] && OSINSTALL_PY="$TMP/src/osinstall.py"
-    python3 - "$OSINSTALL_PY" <<'PY'
+    MAIN_PY="$TMP/main.py"
+    [ -f "$TMP/src/main.py" ] && MAIN_PY="$TMP/src/main.py"
+    python3 - "$OSINSTALL_PY" "$MAIN_PY" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
 s = s.replace("return self.min_size * 2", "return self.min_size")
+s = s.replace(
+    "shutil.copytree(self.firmware_package.path, base)",
+    "shutil.copytree(self.firmware_package.path, base, dirs_exist_ok=True)",
+)
 old = """                zinfo = self.pkg.getinfo(image)
                 if zinfo.file_size % (4 * 1024) != 0:
                     raise Exception("The size of the rootfs image file must be a multiple of 4KiB.")
@@ -138,6 +146,42 @@ new = """                local_img = os.path.join(os.environ.get("REPO_BASE", ".
                         self.fdcopy(sfd, dfd, zinfo.file_size)"""
 assert old in s, "Expected osinstall.py block not found"
 p.write_text(s.replace(old, new, 1))
+
+mp = pathlib.Path(sys.argv[2])
+ms = mp.read_text()
+old_repair = """        self.ins = stub.StubInstaller(self.sysinfo, self.dutil, self.osinfo)
+        if not self.ins.check_existing_install(osi):
+            op = "upgrade" if upgrade else "repair"
+            p_error(   "The existing installation is missing files.")
+            p_message(f"This tool can only {op} installations that completed the first")
+            p_message( "stage of the installation process. If it was interrupted, please")
+            p_message( "delete the partitions manually and reinstall from scratch.")
+            return False"""
+new_repair = """        self.ins = stub.StubInstaller(self.sysinfo, self.dutil, self.osinfo)
+        if not self.ins.check_existing_install(osi):
+            if not upgrade and osi.attached_partitions and len(osi.attached_partitions) >= 2 and os.path.exists("vendorfw"):
+                p_progress("Resuming interrupted stage-1 OS image & ESP installation...")
+                self.dutil.remount_rw(self.ins.osi.system)
+                self.osins = osinstall.OSInstaller(self.dutil, self.data, self.data["os_list"][0])
+                self.osins.load_package()
+                self.osins.part_info = osi.attached_partitions[:len(self.osins.template["partitions"])]
+                self.osins.efi_part = osi.attached_partitions[0]
+                class _ExistingFW:
+                    path = "vendorfw"
+                self.osins.firmware_package = _ExistingFW()
+                self.osins.install(self.ins)
+                if os.path.exists("all_firmware.tar.gz"):
+                    for tdir in self.osins.idata_targets:
+                        shutil.copy("all_firmware.tar.gz", os.path.join(tdir, "all_firmware.tar.gz"))
+            else:
+                op = "upgrade" if upgrade else "repair"
+                p_error(   "The existing installation is missing files.")
+                p_message(f"This tool can only {op} installations that completed the first")
+                p_message( "stage of the installation process. If it was interrupted, please")
+                p_message( "delete the partitions manually and reinstall from scratch.")
+                return False"""
+assert old_repair in ms, "Expected main.py repair block not found"
+mp.write_text(ms.replace(old_repair, new_repair, 1))
 PY
     export REPO_BASE="$DIR"
     echo "[2/2] Launching interactive Asahi Linux installer with Googlebook OS catalog..."

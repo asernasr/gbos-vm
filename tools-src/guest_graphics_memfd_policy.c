@@ -122,11 +122,18 @@ int main(int argc, char **argv) {
             add_allow_rule(&p, "hal_health_default", light_targets[i], "file", sys_ro, 3);
             add_allow_rule(&p, "hal_health_default", light_targets[i], "dir", dir_ro, 4);
             add_allow_rule(&p, "hal_health_default", light_targets[i], "lnk_file", lnk_ro, 2);
+            add_allow_rule(&p, "hal_camera_default", light_targets[i], "file", sys_ro, 3);
+            add_allow_rule(&p, "hal_camera_default", light_targets[i], "dir", dir_ro, 4);
+            add_allow_rule(&p, "hal_camera_default", light_targets[i], "lnk_file", lnk_ro, 2);
         }
+        /* Allow Camera HAL & cameraserver to open V4L2 apple-isp (/dev/video*, /dev/media*) */
+        add_allow_rule(&p, "hal_camera_default", "video_device", "chr_file", chr_rw, 6);
+        add_allow_rule(&p, "hal_camera_default", "device", "dir", dir_ro, 4);
+        add_allow_rule(&p, "cameraserver", "video_device", "chr_file", chr_rw, 6);
         /* Allow shell / terminal apps to connect to the workstation root PTY daemon */
         add_allow_rule(&p, "shell", "socket_device", "sock_file", chr_rw, 4);
         add_allow_rule(&p, "shell", "init", "unix_stream_socket", sock_rw, 4);
-        printf("Added bare-metal Apple Silicon SELinux rules (gpu_device, sysfs_gpu, lights, health, devpts, workstation).\n");
+        printf("Added bare-metal Apple Silicon SELinux rules (gpu_device, sysfs_gpu, lights, health, camera, devpts, workstation).\n");
     }
 
     f.fp = fopen(argv[2], "wb");

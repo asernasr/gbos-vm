@@ -324,6 +324,33 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* 4. Poll Apple DCP External Display (dcpext DP/HDMI Alt-Mode) & AOP Ambient Light */
+        DIR *drm_dir = opendir("/sys/class/drm");
+        if (drm_dir) {
+            int ext_connected = 0;
+            struct dirent *de;
+            while ((de = readdir(drm_dir)) != NULL) {
+                if (strncmp(de->d_name, "card", 4) == 0 &&
+                    (strstr(de->d_name, "-DP-") != NULL || strstr(de->d_name, "-HDMI-") != NULL)) {
+                    char st_path[160], st_val[32] = {0};
+                    snprintf(st_path, sizeof(st_path), "/sys/class/drm/%s/status", de->d_name);
+                    if (read_sysfs_str(st_path, st_val, sizeof(st_val)) == 0 &&
+                        strncmp(st_val, "connected", 9) == 0) {
+                        ext_connected = 1;
+                        break;
+                    }
+                }
+            }
+            closedir(drm_dir);
+            __system_property_set("vendor.asahi.display.external", ext_connected ? "1" : "0");
+        }
+        long als_lux = read_sysfs_long("/sys/bus/iio/devices/iio:device0/in_illuminance_input", -1);
+        if (als_lux >= 0) {
+            char lux_buf[32];
+            snprintf(lux_buf, sizeof(lux_buf), "%ld", als_lux);
+            __system_property_set("vendor.asahi.sensor.als_lux", lux_buf);
+        }
+
         usleep(500000);
     }
 
