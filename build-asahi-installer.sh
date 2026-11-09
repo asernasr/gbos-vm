@@ -29,7 +29,7 @@ if compgen -G "$WORK/asahi-boot/dtb/apple/*.dtb" >/dev/null 2>&1; then
   cp -f "$WORK/asahi-boot/dtb/apple/"*.dtb "$ESP/gbos/dtb/apple/"
 fi
 
-# Ensure standard m1n1 stage 2 + U-Boot binary exists in esp/m1n1/boot.bin
+# Ensure standard m1n1 stage 2 + U-Boot binary exists in esp/m1n1/boot.bin and esp/u-boot-nodtb.bin
 if [ ! -f "$ESP/m1n1/boot.bin" ]; then
   python3 -c '
 import urllib.request, zipfile, io, os
@@ -42,6 +42,7 @@ with open("'$ESP'/m1n1/boot.bin", "wb") as f:
     f.write(zf.read("esp/m1n1/boot.bin"))
 '
 fi
+cp -f "$ESP/m1n1/boot.bin" "$ESP/u-boot-nodtb.bin"
 
 cat > "$ESP/gbos/boot.cmd" <<'BOOTCMD'
 # U-Boot boot script for Googlebook OS Bare-Metal on Apple Silicon (M1 / t8103 / j313)
@@ -230,6 +231,25 @@ PY
     done
     sudo nvram -d upgrade-boot-volume 2>/dev/null || true
     sudo nvram -d IDInstallerDataV2 2>/dev/null || true
+    EFI_NODE="$(diskutil list | awk '/EFI - GOOGL/{print $NF}')"
+    if [ -n "$EFI_NODE" ]; then
+        echo "[1.5/2] Syncing u-boot-nodtb.bin and m1n1 payloads directly into EFI ($EFI_NODE)..."
+        MOUNT_DIR="/tmp/efi-mount-sync"
+        mkdir -p "$MOUNT_DIR"
+        sudo mount -t msdos "/dev/$EFI_NODE" "$MOUNT_DIR" 2>/dev/null || true
+        if [ -d "$MOUNT_DIR" ]; then
+            mkdir -p "$MOUNT_DIR/m1n1" "$MOUNT_DIR/gbos"
+            cp -f "$DIR/esp/u-boot-nodtb.bin" "$MOUNT_DIR/u-boot-nodtb.bin"
+            cp -f "$DIR/esp/m1n1/boot.bin" "$MOUNT_DIR/m1n1/boot.bin"
+            cp -f "$DIR/esp/gbos/Image" "$MOUNT_DIR/gbos/Image"
+            cp -f "$DIR/esp/gbos/initrd.img" "$MOUNT_DIR/gbos/initrd.img"
+            cp -f "$DIR/esp/gbos/boot.cmd" "$MOUNT_DIR/gbos/boot.cmd"
+            sync
+            sudo umount "$MOUNT_DIR" 2>/dev/null || true
+            rmdir "$MOUNT_DIR" 2>/dev/null || true
+            echo "EFI partition successfully synced with u-boot-nodtb.bin and m1n1/boot.bin!"
+        fi
+    fi
     export REPO_BASE="$DIR"
     echo "[2/2] Launching interactive Asahi Linux installer with Googlebook OS catalog..."
     exec caffeinate -dis sudo -E ./install.sh
