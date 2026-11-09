@@ -201,6 +201,27 @@ new_repair = """        self.ins = stub.StubInstaller(self.sysinfo, self.dutil, 
 assert old_repair in ms, "Expected main.py repair block not found"
 mp.write_text(ms.replace(old_repair, new_repair, 1))
 
+# Also ensure action_rebuild_vendorfw copies all boot payloads into the ESP
+old_fw = """        asahi = os.path.join(mountpoint, "asahi")
+        all_fw = "all_firmware.tar.gz"
+        shutil.copy(all_fw, os.path.join(asahi, all_fw))"""
+new_fw = """        asahi = os.path.join(mountpoint, "asahi")
+        all_fw = "all_firmware.tar.gz"
+        shutil.copy(all_fw, os.path.join(asahi, all_fw))
+        repo_base = os.environ.get("REPO_BASE", "")
+        if repo_base:
+            esp_src = os.path.join(repo_base, "esp")
+            if os.path.exists(esp_src):
+                p_progress("Syncing boot payloads (u-boot-nodtb.bin, m1n1, gbos) into ESP...")
+                for root, dirs, files in os.walk(esp_src):
+                    rel = os.path.relpath(root, esp_src)
+                    dst_dir = os.path.join(mountpoint, rel) if rel != "." else mountpoint
+                    os.makedirs(dst_dir, exist_ok=True)
+                    for fn in files:
+                        shutil.copy2(os.path.join(root, fn), os.path.join(dst_dir, fn))"""
+if old_fw in ms:
+    mp.write_text(ms.replace(old_repair, new_repair, 1).replace(old_fw, new_fw, 1))
+
 if len(sys.argv) > 3:
     sp = pathlib.Path(sys.argv[3])
     if sp.exists():
@@ -231,26 +252,54 @@ PY
     done
     sudo nvram -d upgrade-boot-volume 2>/dev/null || true
     sudo nvram -d IDInstallerDataV2 2>/dev/null || true
-    EFI_NODE="$(diskutil list | awk '/EFI - GOOGL/{print $NF}')"
-    if [ -n "$EFI_NODE" ]; then
-        echo "[1.5/2] Syncing u-boot-nodtb.bin and m1n1 payloads directly into EFI ($EFI_NODE)..."
-        MOUNT_DIR="/tmp/efi-mount-sync"
-        mkdir -p "$MOUNT_DIR"
-        sudo mount -t msdos "/dev/$EFI_NODE" "$MOUNT_DIR" 2>/dev/null || true
-        if [ -d "$MOUNT_DIR" ]; then
-            mkdir -p "$MOUNT_DIR/m1n1" "$MOUNT_DIR/gbos"
-            cp -f "$DIR/esp/u-boot-nodtb.bin" "$MOUNT_DIR/u-boot-nodtb.bin"
-            cp -f "$DIR/esp/m1n1/boot.bin" "$MOUNT_DIR/m1n1/boot.bin"
-            cp -f "$DIR/esp/gbos/Image" "$MOUNT_DIR/gbos/Image"
-            cp -f "$DIR/esp/gbos/initrd.img" "$MOUNT_DIR/gbos/initrd.img"
-            cp -f "$DIR/esp/gbos/boot.cmd" "$MOUNT_DIR/gbos/boot.cmd"
-            sync
-            sudo umount "$MOUNT_DIR" 2>/dev/null || true
-            rmdir "$MOUNT_DIR" 2>/dev/null || true
-            echo "EFI partition successfully synced with u-boot-nodtb.bin and m1n1/boot.bin!"
-        fi
-    fi
     export REPO_BASE="$DIR"
+    echo "[1.5/2] Syncing u-boot-nodtb.bin and boot payloads directly into EFI ($DIR/esp)..."
+    sudo python3 - "$DIR" <<'SYNC_PY'
+import subprocess, os, shutil, plistlib, sys
+DIR = sys.argv[1]
+try:
+    p = subprocess.run(["diskutil", "list", "-plist"], capture_output=True, check=True)
+    d = plistlib.loads(p.stdout)
+    esp_node = None
+    for disk in d.get("AllDisksAndPartitions", []):
+        for part in disk.get("Partitions", []):
+            if "EFI - GOOGL" in part.get("VolumeName", ""):
+                esp_node = part.get("DeviceIdentifier")
+                break
+    if not esp_node:
+        esp_node = "disk0s4"
+
+    print(f"  Fixing filesystem and mounting /dev/{esp_node}...")
+    subprocess.run(["fsck_msdos", "-y", f"/dev/r{esp_node}"], capture_output=True)
+    subprocess.run(["diskutil", "mount", esp_node], capture_output=True)
+
+    info_p = subprocess.run(["diskutil", "info", "-plist", esp_node], capture_output=True, check=True)
+    mountpoint = plistlib.loads(info_p.stdout).get("MountPoint")
+    if not mountpoint or not os.path.exists(mountpoint):
+        mountpoint = "/Volumes/EFI - GOOGL"
+        os.makedirs(mountpoint, exist_ok=True)
+        subprocess.run(["mount", "-t", "msdos", f"/dev/{esp_node}", mountpoint], capture_output=True)
+
+    if mountpoint and os.path.exists(mountpoint):
+        print(f"  Mounted at: {mountpoint}")
+        esp_src = os.path.join(DIR, "esp")
+        copied_files = 0
+        for root, dirs, files in os.walk(esp_src):
+            rel = os.path.relpath(root, esp_src)
+            dst_dir = os.path.join(mountpoint, rel) if rel != "." else mountpoint
+            os.makedirs(dst_dir, exist_ok=True)
+            for fn in files:
+                src_f = os.path.join(root, fn)
+                dst_f = os.path.join(dst_dir, fn)
+                shutil.copy2(src_f, dst_f)
+                copied_files += 1
+        subprocess.run(["sync"])
+        print(f"  Successfully synced {copied_files} boot files to EFI (including u-boot-nodtb.bin)!")
+    else:
+        print("  WARNING: Could not mount EFI partition.")
+except Exception as e:
+    print(f"  Sync warning: {e}")
+SYNC_PY
     echo "[2/2] Launching interactive Asahi Linux installer with Googlebook OS catalog..."
     exec caffeinate -dis sudo -E ./install.sh
 fi
