@@ -120,7 +120,9 @@ if [ "${1:-}" = "--install" ]; then
     [ -f "$TMP/src/osinstall.py" ] && OSINSTALL_PY="$TMP/src/osinstall.py"
     MAIN_PY="$TMP/main.py"
     [ -f "$TMP/src/main.py" ] && MAIN_PY="$TMP/src/main.py"
-    python3 - "$OSINSTALL_PY" "$MAIN_PY" <<'PY'
+    STUB_PY="$TMP/stub.py"
+    [ -f "$TMP/src/stub.py" ] && STUB_PY="$TMP/src/stub.py"
+    python3 - "$OSINSTALL_PY" "$MAIN_PY" "$STUB_PY" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
@@ -182,7 +184,35 @@ new_repair = """        self.ins = stub.StubInstaller(self.sysinfo, self.dutil, 
                 return False"""
 assert old_repair in ms, "Expected main.py repair block not found"
 mp.write_text(ms.replace(old_repair, new_repair, 1))
+
+if len(sys.argv) > 3:
+    sp = pathlib.Path(sys.argv[3])
+    if sp.exists():
+        ss = sp.read_text()
+        old_stub = """        if merge_stub_info:
+            with open(os.path.join(path, "stub_info.json"), "r") as fd:
+                stub_info = json.load(fd)
+            stub_info.update(self.stub_info)
+        else:
+            stub_info = self.stub_info"""
+        new_stub = """        stub_file = os.path.join(path, "stub_info.json")
+        if merge_stub_info and os.path.exists(stub_file):
+            try:
+                with open(stub_file, "r") as fd:
+                    stub_info = json.load(fd)
+                stub_info.update(self.stub_info)
+            except Exception:
+                stub_info = self.stub_info
+        else:
+            stub_info = self.stub_info"""
+        if old_stub in ss:
+            sp.write_text(ss.replace(old_stub, new_stub, 1))
 PY
+    for m in "/Volumes/EFI - GOOGL/asahi" "/Volumes/EFI/asahi"; do
+        if [ -d "$m" ] && [ ! -f "$m/stub_info.json" ]; then
+            echo "{}" > "$m/stub_info.json" 2>/dev/null || true
+        fi
+    done
     export REPO_BASE="$DIR"
     echo "[2/2] Launching interactive Asahi Linux installer with Googlebook OS catalog..."
     exec caffeinate -dis sudo -E ./install.sh

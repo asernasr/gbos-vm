@@ -196,6 +196,15 @@ camera_modules {
 }
 """
 
+AICORE_PERMISSIONS_XML = b"""<permissions>
+    <feature name="com.google.android.feature.AICORE" />
+    <feature name="com.google.android.feature.AICORE_EXPERIENCE" />
+    <feature name="com.google.android.feature.AICORE_QC" />
+    <feature name="com.google.android.feature.AICORE_QC_HAMOA" />
+    <feature name="android.software.on_device_intelligence" />
+</permissions>
+"""
+
 ASAHI_MEDIA_CODECS_HAMOA_XML = b"""<?xml version="1.0" encoding="utf-8" ?>
 <MediaCodecs>
     <Include href="media_codecs_google_audio.xml" />
@@ -662,6 +671,12 @@ on post-fs-data
     setprop wifi.interface wlan0
     setprop wlan.driver.status ok
     setprop persist.drm.forcel3.enabled true
+    # Gemini Nano / AICore directories and CPU/Vulkan acceleration fallback configuration
+    mkdir /data/vendor/aicore 0770 system system
+    setprop persist.device_config.runtime_native.aicore_device_override cpu
+    setprop persist.vendor.aicore.acceleration cpu
+    setprop persist.sys.aicore_cpu_fallback true
+    setprop vendor.fastrpc.disable.cdsprpcd.daemon 1
 
 on property:vendor.asahi.bt.ready=1
     start vendor.bluetooth-aidl-qti
@@ -821,6 +836,18 @@ def apply(add, original, files):
     ]:
         add(mp_name, ASAHI_MEDIA_CODECS_PERFORMANCE_XML, "vendor_configs_file")
 
+    # 6b. Install Gemini Nano & AICore feature declarations
+    add(
+        "etc/permissions/com.google.android.feature.aicore.xml",
+        AICORE_PERMISSIONS_XML,
+        "vendor_configs_file",
+    )
+    add(
+        "etc/permissions/com.google.android.feature.aicore_qc_hamoa.xml",
+        AICORE_PERMISSIONS_XML,
+        "vendor_configs_file",
+    )
+
     # 7. Remove QEMU-only guest helpers (including vm-offline-desktop) so bare-metal
     #    Googlebook OS runs its normal Setup Wizard, Lockscreen, and Screen Timeout.
     for vm_only in [
@@ -867,6 +894,16 @@ def apply(add, original, files):
         b"vendor.media.target_variant=_hamoa\n"
         b"ro.media.xml_variant.codecs=_hamoa\n"
         b"ro.media.xml_variant.codecs_performance=_hamoa\n"
+        b"# Experimental Gemini Nano & AICore on-device AI\n"
+        b"ro.aicore.enabled=true\n"
+        b"ro.odp.feature_flags.enable_odp_feature=true\n"
+        b"ro.odp.feature_flags.enable_on_device_intelligence=true\n"
+        b"persist.device_config.on_device_personalization.enable_on_device_personalization=true\n"
+        b"persist.device_config.on_device_personalization.enable_in_app_pcc=true\n"
+        b"persist.device_config.runtime_native.aicore_device_override=cpu\n"
+        b"persist.vendor.aicore.acceleration=cpu\n"
+        b"persist.sys.aicore_cpu_fallback=true\n"
+        b"vendor.fastrpc.disable.cdsprpcd.daemon=1\n"
     )
     add("build.prop", b_prop, b_lbl, b_mode)
 
