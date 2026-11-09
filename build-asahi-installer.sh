@@ -131,13 +131,13 @@ s = s.replace(
     "shutil.copytree(self.firmware_package.path, base)",
     "shutil.copytree(self.firmware_package.path, base, dirs_exist_ok=True)",
 )
-old = """                zinfo = self.pkg.getinfo(image)
+old = r"""                zinfo = self.pkg.getinfo(image)
                 if zinfo.file_size % (4 * 1024) != 0:
                     raise Exception("The size of the rootfs image file must be a multiple of 4KiB.")
-                with self.pkg.open(image) as sfd, \\
+                with self.pkg.open(image) as sfd, \
                     open(f"/dev/r{info.name}", "r+b") as dfd:
                     self.fdcopy(sfd, dfd, zinfo.file_size)"""
-new = """                local_img = os.path.join(os.environ.get("REPO_BASE", "."), image)
+new = r"""                local_img = os.path.join(os.environ.get("REPO_BASE", "."), image)
                 if os.path.exists(local_img):
                     fsize = os.stat(local_img).st_size
                     with open(local_img, "rb") as sfd, open(f"/dev/r{info.name}", "r+b") as dfd:
