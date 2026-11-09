@@ -2,6 +2,14 @@
 # Dedicated, verbose EFI sync script for Googlebook OS on Apple Silicon
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -d "$DIR/work/asahi-installer/esp" ]; then
+    ESP_SRC="$DIR/work/asahi-installer/esp"
+elif [ -d "$DIR/esp" ]; then
+    ESP_SRC="$DIR/esp"
+else
+    echo "ERROR: Cannot find esp directory."
+    exit 1
+fi
 
 echo "======================================================================"
 echo " Googlebook OS - Apple Silicon Bare-Metal EFI Sync Tool"
@@ -41,16 +49,16 @@ echo "  Mounted successfully at: $MOUNTPOINT"
 
 # 4. Copy boot binaries and kernel payloads
 echo "[4/4] Copying verified boot payloads into EFI partition..."
-cp -v "$DIR/esp/u-boot-nodtb.bin" "$MOUNTPOINT/u-boot-nodtb.bin"
-cp -v "$DIR/esp/boot.scr" "$MOUNTPOINT/boot.scr"
-cp -v "$DIR/esp/boot.cmd" "$MOUNTPOINT/boot.cmd"
+cp -v "$ESP_SRC/u-boot-nodtb.bin" "$MOUNTPOINT/u-boot-nodtb.bin"
+cp -v "$ESP_SRC/boot.scr" "$MOUNTPOINT/boot.scr"
+cp -v "$ESP_SRC/boot.cmd" "$MOUNTPOINT/boot.cmd"
 
 mkdir -p "$MOUNTPOINT/m1n1" "$MOUNTPOINT/gbos" "$MOUNTPOINT/asahi"
-cp -v "$DIR/esp/m1n1/boot.bin" "$MOUNTPOINT/m1n1/boot.bin"
-cp -v "$DIR/esp/gbos/Image" "$MOUNTPOINT/gbos/Image"
-cp -v "$DIR/esp/gbos/initrd.img" "$MOUNTPOINT/gbos/initrd.img"
-cp -v "$DIR/esp/gbos/boot.cmd" "$MOUNTPOINT/gbos/boot.cmd"
-cp -v "$DIR/esp/gbos/boot.scr" "$MOUNTPOINT/gbos/boot.scr"
+cp -v "$ESP_SRC/m1n1/boot.bin" "$MOUNTPOINT/m1n1/boot.bin"
+cp -v "$ESP_SRC/gbos/Image" "$MOUNTPOINT/gbos/Image"
+cp -v "$ESP_SRC/gbos/initrd.img" "$MOUNTPOINT/gbos/initrd.img"
+cp -v "$ESP_SRC/gbos/boot.cmd" "$MOUNTPOINT/gbos/boot.cmd"
+cp -v "$ESP_SRC/gbos/boot.scr" "$MOUNTPOINT/gbos/boot.scr"
 if [ ! -f "$MOUNTPOINT/asahi/stub_info.json" ]; then
     echo "{}" > "$MOUNTPOINT/asahi/stub_info.json"
 fi
