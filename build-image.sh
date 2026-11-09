@@ -48,6 +48,16 @@ say "User data area and extra kernel modules"
 
 mkdir -p "$IMAGE_DIR"; chmod 700 "$IMAGE_DIR"
 mv artifacts/mica/base-heap-vblk/googlebook.raw artifacts/mica/base-heap-vblk/initrd.img "$IMAGE_DIR/"
+# Ensure googlebook.raw is 4096-byte sector aligned for direct raw disk writes (/dev/rdisk0sN)
+python3 -c "
+import pathlib
+p = pathlib.Path('$IMAGE_DIR/googlebook.raw')
+sz = p.stat().st_size
+aligned = ((sz + 4095) // 4096) * 4096
+if sz != aligned:
+    with p.open('a+b') as f:
+        f.truncate(aligned)
+"
 # Holds all guest data: keep it private.
 chmod 600 "$IMAGE_DIR/googlebook.raw"
 cp artifacts/mica/normal/kernel.Image "$IMAGE_DIR/kernel.Image"
