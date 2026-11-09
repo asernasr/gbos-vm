@@ -29,6 +29,20 @@ if compgen -G "$WORK/asahi-boot/dtb/apple/*.dtb" >/dev/null 2>&1; then
   cp -f "$WORK/asahi-boot/dtb/apple/"*.dtb "$ESP/gbos/dtb/apple/"
 fi
 
+# Ensure standard m1n1 stage 2 + U-Boot binary exists in esp/m1n1/boot.bin
+if [ ! -f "$ESP/m1n1/boot.bin" ]; then
+  python3 -c '
+import urllib.request, zipfile, io, os
+url = "https://cdn.asahilinux.org/os/uefi-only-20261002-asahi-7.1.13-2.zip"
+req = urllib.request.Request(url)
+with urllib.request.urlopen(req) as resp:
+    data = resp.read()
+zf = zipfile.ZipFile(io.BytesIO(data))
+with open("'$ESP'/m1n1/boot.bin", "wb") as f:
+    f.write(zf.read("esp/m1n1/boot.bin"))
+'
+fi
+
 cat > "$ESP/gbos/boot.cmd" <<'BOOTCMD'
 # U-Boot boot script for Googlebook OS Bare-Metal on Apple Silicon (M1 / t8103 / j313)
 echo "Booting Googlebook OS (Android 17 Bare-Metal Workstation) on Apple Silicon..."
@@ -56,9 +70,10 @@ cat > "$OUT/installer_data.json" <<JSON
       "name": "Googlebook OS 17 (Apple Silicon Bare-Metal Workstation)",
       "default_os_name": "Googlebook OS",
       "boot_object": "m1n1.bin",
-      "next_object": "u-boot-nodtb.bin",
+      "next_object": "m1n1/boot.bin",
       "package": "gbos-asahi-esp.zip",
       "supported_models": ["j313", "j274", "j293", "j314", "j316", "j413", "j493"],
+      "supported_fw": ["13.5", "14.8.3"],
       "partitions": [
         {
           "name": "EFI",
@@ -213,6 +228,8 @@ PY
             echo "{}" > "$m/stub_info.json" 2>/dev/null || true
         fi
     done
+    sudo nvram -d upgrade-boot-volume 2>/dev/null || true
+    sudo nvram -d IDInstallerDataV2 2>/dev/null || true
     export REPO_BASE="$DIR"
     echo "[2/2] Launching interactive Asahi Linux installer with Googlebook OS catalog..."
     exec caffeinate -dis sudo -E ./install.sh
