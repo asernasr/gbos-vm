@@ -59,6 +59,25 @@ else
 fi
 BOOTCMD
 
+cp -f "$ESP/gbos/boot.cmd" "$ESP/boot.cmd"
+
+python3 - <<MAKE_SCR
+import struct, zlib, time
+with open("$ESP/boot.cmd", "rb") as f:
+    data = f.read()
+magic, t, size, load, ep = 0x27051956, int(time.time()), len(data), 0, 0
+dcrc = zlib.crc32(data) & 0xffffffff
+os_type, arch, img_type, comp = 0, 22, 6, 0
+name_bytes = b"boot script".ljust(32, b"\0")
+hdr_no_hcrc = struct.pack(">IIIIIIIBBBB32s", magic, 0, t, size, load, ep, dcrc, os_type, arch, img_type, comp, name_bytes)
+hcrc = zlib.crc32(hdr_no_hcrc) & 0xffffffff
+hdr = struct.pack(">IIIIIIIBBBB32s", magic, hcrc, t, size, load, ep, dcrc, os_type, arch, img_type, comp, name_bytes)
+with open("$ESP/boot.scr", "wb") as f:
+    f.write(hdr + data)
+with open("$ESP/gbos/boot.scr", "wb") as f:
+    f.write(hdr + data)
+MAKE_SCR
+
 say "Creating ESP archive and computing installer_data.json metadata"
 (cd "$OUT" && zip -q -r "$OUT/os/gbos-asahi-esp.zip" esp)
 
