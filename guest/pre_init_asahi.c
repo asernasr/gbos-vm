@@ -4,23 +4,18 @@
  * Runs as PID 1 (/init) in the first-stage initramfs before chaining into Android's
  * real first-stage init (/init.real -> /system/bin/init).
  *
- * Why this exists:
- *  Apple Silicon's NVMe controller and macOS diskutil / asahi-installer expect a standard
- *  3-partition Asahi distro layout (APFS 11.3 stub + EFI System Partition + 1 Linux root
- *  partition), rather than 75 raw Android GPT partitions on the physical NVMe header.
- *
- * What it does:
+ * Key Tasks:
  *  1. Mounts /dev (devtmpfs), /proc, and /sys.
- *  2. Scans /dev/nvme0n1p* (or /dev/vda* in test VMs) for the Googlebook OS inner GPT
- *     container image (identified by a valid inner GPT header at LBA 1 containing
- *     "super" and "userdata" partitions).
- *  3. Creates dm-linear block devices via /dev/mapper/control ioctls for every inner
- *     partition and populates /dev/block/by-name/<partname> so Android's first-stage
- *     init mounts super (system, system_ext, product, vendor, odm), metadata, and
- *     userdata transparently.
- *  4. Auto-adjusts the userdata dm-linear target length to fill the user-selected
- *     Asahi partition size if the outer partition was expanded by asahi-installer.
- *  5. Chains into /init.real (Android's first-stage init).
+ *  2. Loads critical Apple Silicon kernel modules (apple-dart, apple-sart, nvme-core,
+ *     nvme-apple, erofs, macsmc, spi-hid-apple, etc.) via finit_module syscall.
+ *  3. Scans /dev/nvme0n1p* for the Googlebook OS inner GPT container image
+ *     (containing "super" and "userdata" partitions).
+ *  4. Creates dm-linear block devices via /dev/mapper/control ioctls for every inner
+ *     partition and populates /dev/block/by-name/<partname> and aliases.
+ *  5. Forks a persistent /dev watcher daemon to re-create /dev/mapper/control and
+ *     all /dev/block/by-name/* symlinks when Android's first_stage_init mounts a
+ *     clean tmpfs over /dev.
+ *  6. Chains into /init.real (Android's first-stage init).
  */
 
 #define _GNU_SOURCE
@@ -38,8 +33,13 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#ifndef __NR_finit_module
+#define __NR_finit_module 273
+#endif
 
 #define GPT_HEADER_SIGNATURE 0x5452415020494645ULL /* "EFI PART" */
 #define SECTOR_SIZE          512ULL
@@ -70,12 +70,87 @@ struct __attribute__((packed)) gpt_entry {
     uint16_t name_utf16[36];
 };
 
+struct mapped_partition {
+    char name[64];
+    char dm_name[64];
+    uint32_t dev_maj;
+    uint32_t dev_min;
+};
+
+static struct mapped_partition g_parts[64];
+static int g_part_count = 0;
+
 static void klog_msg(const char *msg) {
     int fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+        mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
+        fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    }
     if (fd >= 0) {
         char buf[512];
         int n = snprintf(buf, sizeof(buf), "<6>pre_init_asahi: %s\n", msg);
         if (n > 0) write(fd, buf, (size_t)n);
+        close(fd);
+    }
+}
+
+static const char *kmodules[] = {
+    /* Storage & IOMMU (ordered by dependency) */
+    "/lib/modules/apple-dart.ko",
+    "/lib/modules/apple-sart.ko",
+    "/lib/modules/nvme-keyring.ko",
+    "/lib/modules/nvme-auth.ko",
+    "/lib/modules/nvme-core.ko",
+    "/lib/modules/nvme-apple.ko",
+    /* Filesystems */
+    "/lib/modules/erofs.ko",
+    "/lib/modules/lz4hc_compress.ko",
+    "/lib/modules/f2fs.ko",
+    /* Hardware, Keyboard, Trackpad & Power */
+    "/lib/modules/macsmc.ko",
+    "/lib/modules/gpio-macsmc.ko",
+    "/lib/modules/macsmc-power.ko",
+    "/lib/modules/macsmc-reboot.ko",
+    "/lib/modules/macsmc-hwmon.ko",
+    "/lib/modules/rtc-macsmc.ko",
+    "/lib/modules/apple-sio.ko",
+    "/lib/modules/spi-apple.ko",
+    "/lib/modules/spi-hid-apple.ko",
+    "/lib/modules/spi-hid-apple-of.ko",
+    "/lib/modules/pinctrl-apple-gpio.ko",
+    "/lib/modules/apple_wdt.ko",
+    "/lib/modules/apple-dockchannel.ko",
+    "/lib/modules/dockchannel-hid.ko",
+    NULL
+};
+
+static void load_early_modules(void) {
+    klog_msg("Loading essential Apple Silicon & filesystem kernel modules...");
+    for (int i = 0; kmodules[i] != NULL; i++) {
+        const char *mpath = kmodules[i];
+        int fd = open(mpath, O_RDONLY | O_CLOEXEC);
+        if (fd < 0 && strncmp(mpath, "/lib/", 5) == 0) {
+            fd = open(mpath + 4, O_RDONLY | O_CLOEXEC);
+        }
+        if (fd < 0) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "Module file not found: %s", mpath);
+            klog_msg(buf);
+            continue;
+        }
+
+        long ret = syscall(__NR_finit_module, fd, "", 0);
+        if (ret != 0 && errno != EEXIST) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "finit_module %s failed: errno %d (%s)",
+                     mpath, errno, strerror(errno));
+            klog_msg(buf);
+        } else {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "finit_module %s: %s",
+                     mpath, (errno == EEXIST) ? "already loaded" : "success");
+            klog_msg(buf);
+        }
         close(fd);
     }
 }
@@ -102,10 +177,59 @@ static void init_dm_ioctl(struct dm_ioctl *io, const char *name) {
     }
 }
 
+static void repopulate_dev_nodes(void) {
+    mkdir("/dev/mapper", 0755);
+    mknod("/dev/mapper/control", S_IFCHR | 0600, makedev(10, 236));
+    mkdir("/dev/block", 0755);
+    mkdir("/dev/block/by-name", 0755);
+    mkdir("/dev/block/bootdevice", 0755);
+    mkdir("/dev/block/bootdevice/by-name", 0755);
+    mkdir("/dev/block/mapper", 0755);
+
+    for (int i = 0; i < g_part_count; i++) {
+        const char *pname = g_parts[i].name;
+        dev_t dev = makedev(g_parts[i].dev_maj, g_parts[i].dev_min);
+
+        char dm_node[128];
+        snprintf(dm_node, sizeof(dm_node), "/dev/block/dm-%s", g_parts[i].dm_name);
+        unlink(dm_node);
+        mknod(dm_node, S_IFBLK | 0600, dev);
+
+        char link_path[128];
+        snprintf(link_path, sizeof(link_path), "/dev/block/by-name/%s", pname);
+        unlink(link_path);
+        symlink(dm_node, link_path);
+
+        snprintf(link_path, sizeof(link_path), "/dev/block/bootdevice/by-name/%s", pname);
+        unlink(link_path);
+        symlink(dm_node, link_path);
+
+        /* Handle slot-suffixed partitions (e.g. boot_a -> boot, vbmeta_a -> vbmeta) */
+        size_t len = strlen(pname);
+        if (len > 2 && pname[len - 2] == '_' && (pname[len - 1] == 'a' || pname[len - 1] == 'b')) {
+            char base[64];
+            strncpy(base, pname, len - 2);
+            base[len - 2] = '\0';
+
+            snprintf(link_path, sizeof(link_path), "/dev/block/by-name/%s", base);
+            unlink(link_path);
+            symlink(dm_node, link_path);
+
+            snprintf(link_path, sizeof(link_path), "/dev/block/bootdevice/by-name/%s", base);
+            unlink(link_path);
+            symlink(dm_node, link_path);
+        }
+
+        /* Mirror into /dev/block/mapper/ */
+        snprintf(link_path, sizeof(link_path), "/dev/block/mapper/%s", pname);
+        unlink(link_path);
+        symlink(dm_node, link_path);
+    }
+}
+
 static int create_dm_linear_part(int dm_fd, const char *container_dev,
                                  const char *part_name, uint64_t start_sector,
-                                 uint64_t num_sectors, int minor_hint) {
-    (void)minor_hint;
+                                 uint64_t num_sectors) {
     uint8_t buf[sizeof(struct dm_ioctl) + sizeof(struct dm_target_spec) + 256];
     struct dm_ioctl *io = (struct dm_ioctl *)buf;
 
@@ -151,19 +275,13 @@ static int create_dm_linear_part(int dm_fd, const char *container_dev,
     uint32_t dev_maj = major(io->dev);
     uint32_t dev_min = minor(io->dev);
 
-    char dm_node[128];
-    snprintf(dm_node, sizeof(dm_node), "/dev/block/dm-gbos-%s", part_name);
-    unlink(dm_node);
-    mknod(dm_node, S_IFBLK | 0600, makedev(dev_maj, dev_min));
-
-    char link_path[128];
-    snprintf(link_path, sizeof(link_path), "/dev/block/by-name/%s", part_name);
-    unlink(link_path);
-    symlink(dm_node, link_path);
-
-    snprintf(link_path, sizeof(link_path), "/dev/block/bootdevice/by-name/%s", part_name);
-    unlink(link_path);
-    symlink(dm_node, link_path);
+    if (g_part_count < 64) {
+        strncpy(g_parts[g_part_count].name, part_name, sizeof(g_parts[g_part_count].name) - 1);
+        strncpy(g_parts[g_part_count].dm_name, dm_name, sizeof(g_parts[g_part_count].dm_name) - 1);
+        g_parts[g_part_count].dev_maj = dev_maj;
+        g_parts[g_part_count].dev_min = dev_min;
+        g_part_count++;
+    }
 
     return 0;
 }
@@ -228,11 +346,6 @@ static bool probe_and_map_container(int dm_fd, const char *dev_path) {
              dev_path, (unsigned long long)gpt_sector_size, hdr.num_partition_entries);
     klog_msg(msg);
 
-    mkdir("/dev/block", 0755);
-    mkdir("/dev/block/by-name", 0755);
-    mkdir("/dev/block/bootdevice", 0755);
-    mkdir("/dev/block/bootdevice/by-name", 0755);
-
     uint64_t scale_to_512 = gpt_sector_size / SECTOR_SIZE;
     uint64_t container_512_sectors = container_bytes / SECTOR_SIZE;
     int mapped = 0;
@@ -258,20 +371,47 @@ static bool probe_and_map_container(int dm_fd, const char *dev_path) {
             count_512 = (container_512_sectors - 128ULL) - start_512;
         }
 
-        if (create_dm_linear_part(dm_fd, dev_path, pname, start_512, count_512, mapped) == 0) {
+        if (create_dm_linear_part(dm_fd, dev_path, pname, start_512, count_512) == 0) {
             mapped++;
         }
     }
 
     close(fd);
+    repopulate_dev_nodes();
     snprintf(msg, sizeof(msg), "Mapped %d inner Android partitions from %s via dm-linear",
              mapped, dev_path);
     klog_msg(msg);
     return (mapped > 0);
 }
 
+static void run_dev_watcher(void) {
+    klog_msg("dev_watcher: background daemon active, protecting /dev during Android first_stage_mount");
+    int loops = 0;
+    while (1) {
+        struct stat st;
+        bool missing = false;
+        if (stat("/dev/block/by-name/super", &st) != 0) {
+            missing = true;
+        }
+        if (stat("/dev/mapper/control", &st) != 0) {
+            missing = true;
+        }
+
+        if (missing) {
+            repopulate_dev_nodes();
+            klog_msg("dev_watcher: tmpfs overmount detected! Restored /dev/mapper/control and /dev/block/by-name/*");
+        }
+
+        loops++;
+        if (loops < 2000) {
+            usleep(5000);  /* 5ms during initial 10s bringup */
+        } else {
+            usleep(100000); /* 100ms steady state */
+        }
+    }
+}
+
 int main(int argc, char **argv, char **envp) {
-    /* Only run when invoked as PID 1 or explicitly via --map-only */
     bool is_pid1 = (getpid() == 1);
     bool map_only = (argc > 1 && strcmp(argv[1], "--map-only") == 0);
     if (!is_pid1 && !map_only) {
@@ -285,20 +425,22 @@ int main(int argc, char **argv, char **envp) {
     mount("proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL);
     mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL);
 
+    klog_msg("=== Googlebook OS Bare-Metal Apple Silicon Pre-Init Starting ===");
+
+    /* Load early drivers so Apple ANS2 NVMe controller and filesystems are probed */
+    load_early_modules();
+
     mkdir("/dev/mapper", 0755);
     int dm_fd = open("/dev/mapper/control", O_RDWR | O_CLOEXEC);
     if (dm_fd < 0) {
-        dm_fd = open("/dev/device-mapper", O_RDWR | O_CLOEXEC);
-    }
-    if (dm_fd < 0) {
-        /* Create device-mapper control node (major 10, minor 236) if devtmpfs hasn't yet */
         mknod("/dev/mapper/control", S_IFCHR | 0600, makedev(10, 236));
         dm_fd = open("/dev/mapper/control", O_RDWR | O_CLOEXEC);
     }
 
     if (dm_fd >= 0) {
-        /* Wait up to 5 seconds for Apple ANS2 NVMe (/dev/nvme0n1p*) to enumerate */
-        for (int attempt = 0; attempt < 25; attempt++) {
+        /* Wait up to 10 seconds for Apple ANS2 NVMe (/dev/nvme0n1p*) to enumerate */
+        klog_msg("Scanning for Googlebook OS inner GPT container partition...");
+        for (int attempt = 0; attempt < 50; attempt++) {
             bool done = false;
             for (int p = 1; p <= 16; p++) {
                 char cand[64];
@@ -315,16 +457,37 @@ int main(int argc, char **argv, char **envp) {
             usleep(200000);
         }
         close(dm_fd);
+    } else {
+        klog_msg("ERROR: Failed to open /dev/mapper/control!");
     }
 
     if (map_only) {
         return 0;
     }
 
+    /* Spawn background daemon to watch and repopulate /dev when Android overmounts tmpfs */
+    pid_t wpid = fork();
+    if (wpid == 0) {
+        run_dev_watcher();
+        _exit(0);
+    } else if (wpid > 0) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Spawned dev_watcher daemon (PID %d)", (int)wpid);
+        klog_msg(buf);
+    }
+
+    klog_msg("Pre-init container mapping complete. Chaining PID 1 to /init.real...");
+
     /* Hand off PID 1 to Android's real first-stage init */
     if (access("/init.real", X_OK) == 0) {
         execve("/init.real", argv, envp);
     }
     execve("/system/bin/init", argv, envp);
+
+    char err[128];
+    snprintf(err, sizeof(err), "FATAL: execve failed: %s", strerror(errno));
+    klog_msg(err);
+
+    while (1) sleep(1);
     return 1;
 }
