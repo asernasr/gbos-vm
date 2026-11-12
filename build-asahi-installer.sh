@@ -67,7 +67,7 @@ search --no-floppy --file --set=root /gbos/Image
 menuentry "Googlebook OS 17 (Android Bare-Metal Workstation)" --class android --class os {
     set gfxpayload=keep
     echo "Loading Googlebook OS 16K Kernel (/gbos/Image)..."
-    linux /gbos/Image console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.selinux=enforcing androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    linux /gbos/Image console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
     echo "Loading Initial Ramdisk (/gbos/initrd.img)..."
     initrd /gbos/initrd.img
     echo "Booting into Android 17..."
@@ -91,7 +91,7 @@ label GooglebookOS
     menu label Googlebook OS 17 (Android Bare-Metal Workstation)
     kernel /gbos/Image
     initrd /gbos/initrd.img
-    append console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.selinux=enforcing androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    append console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
 EXTLINUX
 
 cp -f "$ESP/extlinux/extlinux.conf" "$ESP/boot/extlinux/extlinux.conf"
@@ -100,7 +100,7 @@ cp -f "$ESP/extlinux/extlinux.conf" "$ESP/boot/extlinux/extlinux.conf"
 cat > "$ESP/gbos/boot.cmd" <<'BOOTCMD'
 # U-Boot boot script for Googlebook OS Bare-Metal on Apple Silicon (M1 / t8103 / j313)
 echo "Booting Googlebook OS (Android 17 Bare-Metal Workstation) on Apple Silicon..."
-setenv bootargs "console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.selinux=enforcing androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0"
+setenv bootargs "console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0"
 load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} /gbos/Image
 load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} /gbos/initrd.img
 setenv ramdisk_size ${filesize}

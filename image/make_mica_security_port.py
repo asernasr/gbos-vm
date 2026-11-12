@@ -334,7 +334,9 @@ mode,b=entries[name];s=b.decode();s='\n'.join(l.replace(',avb=vbmeta','') if l.s
 extra_cpio={name:(mode,s.encode())}
 if '--asahi-baremetal' in sys.argv:
  pre_init=(GUEST/'asahi-bin/pre_init_asahi' if GUEST else R/'work/guest/asahi-bin/pre_init_asahi').read_bytes()
- extra_cpio['init.real']=(0o120777,b'/system/bin/init')
+ ram_entries=read(ram)
+ orig_init=ram_entries.get('init',(0o100755,b''))[1]
+ extra_cpio['init.real']=(0o100755,orig_init)
  extra_cpio['init']=(0o100755,pre_init)
 ram+=write(extra_cpio)
 (O/'initrd.img').write_bytes(subprocess.check_output(['lz4','-l','-c'],input=ram))
