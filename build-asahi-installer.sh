@@ -44,6 +44,59 @@ with open("'$ESP'/m1n1/boot.bin", "wb") as f:
 fi
 cp -f "$ESP/m1n1/boot.bin" "$ESP/u-boot-nodtb.bin"
 
+# 1. Provide official ARM64 UEFI GRUB loader (bootaa64.efi / grubaa64.efi)
+if [ -f "$WORK/asahi-boot/bootaa64.efi" ]; then
+  mkdir -p "$ESP/efi/boot" "$ESP/efi/fedora" "$ESP/efi/ubuntu" "$ESP/boot/grub"
+  cp -f "$WORK/asahi-boot/bootaa64.efi" "$ESP/efi/boot/bootaa64.efi"
+  cp -f "$WORK/asahi-boot/bootaa64.efi" "$ESP/efi/boot/grubaa64.efi"
+  cp -f "$WORK/asahi-boot/bootaa64.efi" "$ESP/efi/fedora/grubaa64.efi"
+  cp -f "$WORK/asahi-boot/bootaa64.efi" "$ESP/efi/ubuntu/grubaa64.efi"
+fi
+
+# 2. Universal GRUB config file (searches for /gbos/Image and boots kernel + initrd)
+cat > "$ESP/efi/boot/grub.cfg" <<'GRUBCFG'
+set default="0"
+set timeout=1
+
+echo "=========================================================="
+echo " Googlebook OS 17 (Android Bare-Metal on Apple Silicon M1)"
+echo "=========================================================="
+
+search --no-floppy --file --set=root /gbos/Image
+
+menuentry "Googlebook OS 17 (Android Bare-Metal Workstation)" --class android --class os {
+    set gfxpayload=keep
+    echo "Loading Googlebook OS 16K Kernel (/gbos/Image)..."
+    linux /gbos/Image console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.selinux=enforcing androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    echo "Loading Initial Ramdisk (/gbos/initrd.img)..."
+    initrd /gbos/initrd.img
+    echo "Booting into Android 17..."
+}
+GRUBCFG
+
+cp -f "$ESP/efi/boot/grub.cfg" "$ESP/efi/boot/BOOTAA64.cfg"
+cp -f "$ESP/efi/boot/grub.cfg" "$ESP/boot/grub/grub.cfg"
+cp -f "$ESP/efi/boot/grub.cfg" "$ESP/efi/fedora/grub.cfg"
+cp -f "$ESP/efi/boot/grub.cfg" "$ESP/efi/ubuntu/grub.cfg"
+cp -f "$ESP/efi/boot/grub.cfg" "$ESP/grub.cfg"
+
+# 3. U-Boot Extlinux / Syslinux boot configuration
+mkdir -p "$ESP/extlinux" "$ESP/boot/extlinux"
+cat > "$ESP/extlinux/extlinux.conf" <<'EXTLINUX'
+default GooglebookOS
+timeout 10
+prompt 1
+
+label GooglebookOS
+    menu label Googlebook OS 17 (Android Bare-Metal Workstation)
+    kernel /gbos/Image
+    initrd /gbos/initrd.img
+    append console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.selinux=enforcing androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+EXTLINUX
+
+cp -f "$ESP/extlinux/extlinux.conf" "$ESP/boot/extlinux/extlinux.conf"
+
+# 4. Standard U-Boot legacy boot script
 cat > "$ESP/gbos/boot.cmd" <<'BOOTCMD'
 # U-Boot boot script for Googlebook OS Bare-Metal on Apple Silicon (M1 / t8103 / j313)
 echo "Booting Googlebook OS (Android 17 Bare-Metal Workstation) on Apple Silicon..."
@@ -67,7 +120,7 @@ with open("$ESP/boot.cmd", "rb") as f:
     data = f.read()
 magic, t, size, load, ep = 0x27051956, int(time.time()), len(data), 0, 0
 dcrc = zlib.crc32(data) & 0xffffffff
-os_type, arch, img_type, comp = 0, 22, 6, 0
+os_type, arch, img_type, comp = 5, 22, 6, 0  # 5 = IH_OS_LINUX, 22 = IH_ARCH_ARM64, 6 = IH_TYPE_SCRIPT
 name_bytes = b"boot script".ljust(32, b"\0")
 hdr_no_hcrc = struct.pack(">IIIIIIIBBBB32s", magic, 0, t, size, load, ep, dcrc, os_type, arch, img_type, comp, name_bytes)
 hcrc = zlib.crc32(hdr_no_hcrc) & 0xffffffff

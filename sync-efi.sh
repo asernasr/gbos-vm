@@ -49,27 +49,29 @@ echo "  Mounted successfully at: $MOUNTPOINT"
 
 # 4. Copy boot binaries and kernel payloads
 echo "[4/4] Copying verified boot payloads into EFI partition..."
-cp -v "$ESP_SRC/u-boot-nodtb.bin" "$MOUNTPOINT/u-boot-nodtb.bin"
-cp -v "$ESP_SRC/boot.scr" "$MOUNTPOINT/boot.scr"
-cp -v "$ESP_SRC/boot.cmd" "$MOUNTPOINT/boot.cmd"
+cp -R -p -v "$ESP_SRC/"* "$MOUNTPOINT/"
 
-mkdir -p "$MOUNTPOINT/m1n1" "$MOUNTPOINT/gbos" "$MOUNTPOINT/asahi"
-cp -v "$ESP_SRC/m1n1/boot.bin" "$MOUNTPOINT/m1n1/boot.bin"
-cp -v "$ESP_SRC/gbos/Image" "$MOUNTPOINT/gbos/Image"
-cp -v "$ESP_SRC/gbos/initrd.img" "$MOUNTPOINT/gbos/initrd.img"
-cp -v "$ESP_SRC/gbos/boot.cmd" "$MOUNTPOINT/gbos/boot.cmd"
-cp -v "$ESP_SRC/gbos/boot.scr" "$MOUNTPOINT/gbos/boot.scr"
 if [ ! -f "$MOUNTPOINT/asahi/stub_info.json" ]; then
+    mkdir -p "$MOUNTPOINT/asahi"
     echo "{}" > "$MOUNTPOINT/asahi/stub_info.json"
 fi
+
+# Clean macOS AppleDouble metadata (._ files)
+dot_clean "$MOUNTPOINT" 2>/dev/null || true
 
 sync
 echo ""
 echo "======================================================================"
 echo " VERIFIED FILES ON EFI PARTITION ($MOUNTPOINT):"
 echo "======================================================================"
-ls -lh "$MOUNTPOINT/u-boot-nodtb.bin" "$MOUNTPOINT/boot.scr" "$MOUNTPOINT/gbos/Image" "$MOUNTPOINT/gbos/initrd.img"
+ls -lh "$MOUNTPOINT/u-boot-nodtb.bin" \
+       "$MOUNTPOINT/efi/boot/bootaa64.efi" \
+       "$MOUNTPOINT/efi/boot/grub.cfg" \
+       "$MOUNTPOINT/extlinux/extlinux.conf" \
+       "$MOUNTPOINT/boot.scr" \
+       "$MOUNTPOINT/gbos/Image" \
+       "$MOUNTPOINT/gbos/initrd.img"
 echo "======================================================================"
-echo "SUCCESS: EFI partition is fully populated and verified on physical SSD!"
+echo "SUCCESS: EFI partition is fully populated with UEFI GRUB, extlinux & U-Boot!"
 echo "Now shut down your Mac, hold the power button, and select Googlebook OS."
 echo "======================================================================"
