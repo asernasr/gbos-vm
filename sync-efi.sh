@@ -70,8 +70,11 @@ ls -lh "$MOUNTPOINT/u-boot-nodtb.bin" \
        "$MOUNTPOINT/extlinux/extlinux.conf" \
        "$MOUNTPOINT/boot.scr" \
        "$MOUNTPOINT/gbos/Image" \
+       "$MOUNTPOINT/gbos/vmlinuz" \
        "$MOUNTPOINT/gbos/initrd.img"
 echo "======================================================================"
-echo "SUCCESS: EFI partition is fully populated with UEFI GRUB, extlinux & U-Boot!"
+file "$MOUNTPOINT/gbos/Image"
+echo "======================================================================"
+echo "SUCCESS: EFI partition is fully populated with 16KB kernel, UEFI GRUB & initrd!"
 echo "Now shut down your Mac, hold the power button, and select Googlebook OS."
 echo "======================================================================"

@@ -64,10 +64,19 @@ echo "=========================================================="
 
 search --no-floppy --file --set=root /gbos/Image
 
-menuentry "Googlebook OS 17 (Android Bare-Metal Workstation)" --class android --class os {
+menuentry "Googlebook OS 17 (Android Bare-Metal Workstation - 16K)" --class android --class os {
     set gfxpayload=keep
     echo "Loading Googlebook OS 16K Kernel (/gbos/Image)..."
     linux /gbos/Image console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    echo "Loading Initial Ramdisk (/gbos/initrd.img)..."
+    initrd /gbos/initrd.img
+    echo "Booting into Android 17..."
+}
+
+menuentry "Googlebook OS 17 (Compressed 16K vmlinuz Fallback)" --class android --class os {
+    set gfxpayload=keep
+    echo "Loading Googlebook OS 16K vmlinuz (/gbos/vmlinuz)..."
+    linux /gbos/vmlinuz console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
     echo "Loading Initial Ramdisk (/gbos/initrd.img)..."
     initrd /gbos/initrd.img
     echo "Booting into Android 17..."
