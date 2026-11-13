@@ -108,11 +108,26 @@ static const struct kmod_entry kmodules[] = {
     { "/lib/modules/dm-verity.ko", "" },
     { "/lib/modules/dm-crypt.ko", "" },
     { "/lib/modules/dm-inlinecrypt.ko", "" },
-    /* Filesystems */
+    /* Filesystems & Swap (Stage 1 + Stage 2 Android core) */
     { "/lib/modules/erofs.ko", "" },
     { "/lib/modules/lz4hc_compress.ko", "" },
     { "/lib/modules/f2fs.ko", "" },
-    /* Hardware, Keyboard, Trackpad & Power */
+    { "/lib/modules/fat.ko", "" },
+    { "/lib/modules/vfat.ko", "" },
+    { "/lib/modules/fuse.ko", "" },
+    { "/lib/modules/overlay.ko", "" },
+    { "/lib/modules/zram.ko", "" },
+    /* Display (apple-dcp) & AGX GPU (asahi) */
+    { "/lib/modules/soundcore.ko", "" },
+    { "/lib/modules/snd.ko", "" },
+    { "/lib/modules/snd-timer.ko", "" },
+    { "/lib/modules/snd-pcm.ko", "" },
+    { "/lib/modules/snd-pcm-dmaengine.ko", "" },
+    { "/lib/modules/drm_dma_helper.ko", "" },
+    { "/lib/modules/typec.ko", "" },
+    { "/lib/modules/appledrm.ko", "" },
+    { "/lib/modules/asahi.ko", "" },
+    /* Hardware, Keyboard, Trackpad, Power & USB-C */
     { "/lib/modules/macsmc.ko", "" },
     { "/lib/modules/gpio-macsmc.ko", "" },
     { "/lib/modules/macsmc-power.ko", "" },
@@ -127,6 +142,15 @@ static const struct kmod_entry kmodules[] = {
     { "/lib/modules/apple_wdt.ko", "" },
     { "/lib/modules/apple-dockchannel.ko", "" },
     { "/lib/modules/dockchannel-hid.ko", "" },
+    { "/lib/modules/hid-apple.ko", "" },
+    { "/lib/modules/apple-tunable.ko", "" },
+    { "/lib/modules/phy-apple-atc.ko", "" },
+    { "/lib/modules/ulpi.ko", "" },
+    { "/lib/modules/udc-core.ko", "" },
+    { "/lib/modules/dwc3.ko", "" },
+    { "/lib/modules/dwc3-apple.ko", "" },
+    { "/lib/modules/tps6598x-core.ko", "" },
+    { "/lib/modules/tps6598x.ko", "" },
     { NULL, NULL }
 };
 
