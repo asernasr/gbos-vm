@@ -487,13 +487,39 @@ int main(int argc, char **argv, char **envp) {
         return 0;
     }
 
-    klog_msg("Pre-init setup complete. Chaining PID 1 to /init.real...");
+    if (found_dev[0] != '\0') {
+        char uevent_buf[512];
+        int ufd = open("/sys/block/loop0/loop0p3/uevent", O_RDONLY | O_CLOEXEC);
+        if (ufd >= 0) {
+            ssize_t n = read(ufd, uevent_buf, sizeof(uevent_buf) - 1);
+            close(ufd);
+            if (n > 0) {
+                uevent_buf[n] = '\0';
+                for (ssize_t i = 0; i < n; i++) {
+                    if (uevent_buf[i] == '\n') uevent_buf[i] = ' ';
+                }
+                char msg[600];
+                snprintf(msg, sizeof(msg), "loop0p3 uevent: %s", uevent_buf);
+                klog_msg(msg);
+            }
+        } else {
+            klog_msg("WARNING: /sys/block/loop0/loop0p3/uevent not found!");
+        }
+    }
+
+    klog_msg("Pre-init setup complete. Unmounting temp fs and chaining PID 1 to /init.real...");
+
+    /* Unmount /sys, /proc, /dev so init.real FirstStageMain CHECKCALL(mount(...)) does not hit EBUSY */
+    umount2("/sys", MNT_DETACH);
+    umount2("/proc", MNT_DETACH);
+    umount2("/dev", MNT_DETACH);
 
     if (access("/init.real", X_OK) == 0) {
         execve("/init.real", argv, envp);
     }
     execve("/system/bin/init", argv, envp);
 
+    mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID, "mode=0755");
     char err[128];
     snprintf(err, sizeof(err), "FATAL: execve failed: %s", strerror(errno));
     klog_msg(err);
