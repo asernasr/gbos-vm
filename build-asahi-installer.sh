@@ -67,7 +67,7 @@ search --no-floppy --file --set=root /gbos/Image
 menuentry "Googlebook OS 17 (Android Bare-Metal Workstation - 16K)" --class android --class os {
     set gfxpayload=keep
     echo "Loading Googlebook OS 16K Kernel (/gbos/Image)..."
-    linux /gbos/Image console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    linux /gbos/Image console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused printk.devkmsg=on androidboot.hardware=android-desktop androidboot.hardware.platform=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.vbmeta.size=7680 androidboot.vbmeta.hash_alg=sha256 androidboot.vbmeta.digest=9118d58c024a0b43fef17a1dcdf6b999b5ea9cbc053fd4377d5d78c445b15692 androidboot.vbmeta.device_state=unlocked androidboot.verifiedbootstate=orange androidboot.veritymode=enforcing androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none androidboot.vendor.apex.com.android.hardware.audio.desktop=none androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
     echo "Loading Initial Ramdisk (/gbos/initrd.img)..."
     initrd /gbos/initrd.img
     echo "Booting into Android 17..."
@@ -76,7 +76,7 @@ menuentry "Googlebook OS 17 (Android Bare-Metal Workstation - 16K)" --class andr
 menuentry "Googlebook OS 17 (Compressed 16K vmlinuz Fallback)" --class android --class os {
     set gfxpayload=keep
     echo "Loading Googlebook OS 16K vmlinuz (/gbos/vmlinuz)..."
-    linux /gbos/vmlinuz console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    linux /gbos/vmlinuz console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused printk.devkmsg=on androidboot.hardware=android-desktop androidboot.hardware.platform=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.vbmeta.size=7680 androidboot.vbmeta.hash_alg=sha256 androidboot.vbmeta.digest=9118d58c024a0b43fef17a1dcdf6b999b5ea9cbc053fd4377d5d78c445b15692 androidboot.vbmeta.device_state=unlocked androidboot.verifiedbootstate=orange androidboot.veritymode=enforcing androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none androidboot.vendor.apex.com.android.hardware.audio.desktop=none androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
     echo "Loading Initial Ramdisk (/gbos/initrd.img)..."
     initrd /gbos/initrd.img
     echo "Booting into Android 17..."
@@ -100,7 +100,7 @@ label GooglebookOS
     menu label Googlebook OS 17 (Android Bare-Metal Workstation)
     kernel /gbos/Image
     initrd /gbos/initrd.img
-    append console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
+    append console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused printk.devkmsg=on androidboot.hardware=android-desktop androidboot.hardware.platform=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.vbmeta.size=7680 androidboot.vbmeta.hash_alg=sha256 androidboot.vbmeta.digest=9118d58c024a0b43fef17a1dcdf6b999b5ea9cbc053fd4377d5d78c445b15692 androidboot.vbmeta.device_state=unlocked androidboot.verifiedbootstate=orange androidboot.veritymode=enforcing androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none androidboot.vendor.apex.com.android.hardware.audio.desktop=none androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0
 EXTLINUX
 
 cp -f "$ESP/extlinux/extlinux.conf" "$ESP/boot/extlinux/extlinux.conf"
@@ -109,7 +109,7 @@ cp -f "$ESP/extlinux/extlinux.conf" "$ESP/boot/extlinux/extlinux.conf"
 cat > "$ESP/gbos/boot.cmd" <<'BOOTCMD'
 # U-Boot boot script for Googlebook OS Bare-Metal on Apple Silicon (M1 / t8103 / j313)
 echo "Booting Googlebook OS (Android 17 Bare-Metal Workstation) on Apple Silicon..."
-setenv bootargs "console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused androidboot.hardware=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0"
+setenv bootargs "console=ttySAC0,1500000 console=tty0 earlycon root=/dev/ram0 rw clk_ignore_unused pd_ignore_unused printk.devkmsg=on androidboot.hardware=android-desktop androidboot.hardware.platform=android-desktop androidboot.slot_suffix=_a androidboot.force_normal_boot=1 androidboot.selinux=permissive androidboot.vbmeta.size=7680 androidboot.vbmeta.hash_alg=sha256 androidboot.vbmeta.digest=9118d58c024a0b43fef17a1dcdf6b999b5ea9cbc053fd4377d5d78c445b15692 androidboot.vbmeta.device_state=unlocked androidboot.verifiedbootstate=orange androidboot.veritymode=enforcing androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none androidboot.vendor.apex.com.android.hardware.audio.desktop=none androidboot.product.vendor.sku=vmbt firmware_class.path=/vendor/firmware,/vendor_fw/firmware snd-aloop.index=0"
 load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} /gbos/Image
 load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} /gbos/initrd.img
 setenv ramdisk_size ${filesize}
